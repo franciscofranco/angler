@@ -169,8 +169,10 @@ static void _ab_buslevel_update(struct kgsl_pwrctrl *pwr,
 		return;
 	if (ib == 0)
 		*ab = 0;
-	else if (!pwr->bus_percent_ab)
+	else if ((!pwr->bus_percent_ab) && (!pwr->bus_ab_mbytes))
 		*ab = DEFAULT_BUS_P * ib / 100;
+	else if (pwr->bus_width)
+		*ab = pwr->bus_ab_mbytes;
 	else
 		*ab = (pwr->bus_percent_ab * max_bw) / 100;
 
@@ -251,6 +253,8 @@ void kgsl_pwrctrl_buslevel_update(struct kgsl_device *device,
 	} else {
 		/* If the bus is being turned off, reset to default level */
 		pwr->bus_mod = 0;
+		pwr->bus_percent_ab = 0;
+		pwr->bus_ab_mbytes = 0;
 	}
 	trace_kgsl_buslevel(device, pwr->active_pwrlevel, buslevel);
 	last_vote_buslevel = buslevel;
@@ -271,7 +275,8 @@ void kgsl_pwrctrl_buslevel_update(struct kgsl_device *device,
 		msm_bus_scale_client_update_request(pwr->pcl, buslevel);
 
 	/* ask a governor to vote on behalf of us */
-	devfreq_vbif_update_bw(ib_votes[last_vote_buslevel], ab);
+	if (pwr->devbw)
+		devfreq_vbif_update_bw(ib_votes[last_vote_buslevel], ab);
 }
 EXPORT_SYMBOL(kgsl_pwrctrl_buslevel_update);
 
@@ -747,12 +752,19 @@ static ssize_t kgsl_pwrctrl_gpuclk_show(struct device *dev,
 				    struct device_attribute *attr,
 				    char *buf)
 {
+	unsigned long freq;
 	struct kgsl_device *device = kgsl_device_from_dev(dev);
 	struct kgsl_pwrctrl *pwr;
 	if (device == NULL)
 		return 0;
 	pwr = &device->pwrctrl;
-	return snprintf(buf, PAGE_SIZE, "%ld\n", kgsl_pwrctrl_active_freq(pwr));
+
+	if (device->state == KGSL_STATE_SLUMBER)
+		freq = pwr->pwrlevels[pwr->num_pwrlevels - 1].gpu_freq;
+	else
+		freq = kgsl_pwrctrl_active_freq(pwr);
+
+	return snprintf(buf, PAGE_SIZE, "%lu\n", freq);
 }
 
 static ssize_t kgsl_pwrctrl_idle_timer_store(struct device *dev,
@@ -1529,19 +1541,37 @@ int kgsl_pwrctrl_init(struct kgsl_device *device)
 
 	/* Set if independent bus BW voting is supported */
 	pwr->bus_control = pdata->bus_control;
+	/* Bus width in bytes, set it to zero if not found */
+	if (of_property_read_u32(pdev->dev.of_node, "qcom,bus-width",
+		&pwr->bus_width))
+		pwr->bus_width = 0;
 
 	/* Check if gpu bandwidth vote device is defined in dts */
-	gpubw_dev_node = of_parse_phandle(pdev->dev.of_node,
+	if (pwr->bus_control) {
+		/* Check if gpu bandwidth vote device is defined in dts */
+		gpubw_dev_node = of_parse_phandle(pdev->dev.of_node,
 					"qcom,gpubw-dev", 0);
-	/*
-	 * Governor support enables the gpu bus scaling via governor
-	 * and hence no need to register for bus scaling client
-	 * if gpubw-dev is defined.
-	 */
-	if (gpubw_dev_node) {
-		p2dev = of_find_device_by_node(gpubw_dev_node);
-		if (p2dev)
-			pwr->devbw = &p2dev->dev;
+		/*
+		 * Governor support enables the gpu bus scaling via governor
+		 * and hence no need to register for bus scaling client
+		 * if gpubw-dev is defined.
+		 */
+		if (gpubw_dev_node) {
+			p2dev = of_find_device_by_node(gpubw_dev_node);
+			if (p2dev) {
+				pwr->devbw = &p2dev->dev;
+			} else {
+				KGSL_PWR_ERR(device,
+					"gpubw-dev not available");
+				result = -EINVAL;
+				goto done;
+			}
+		} else {
+			KGSL_PWR_ERR(device,
+				"Unable to find gpubw-dev device in dts");
+			result = -EINVAL;
+			goto done;
+		}
 	} else {
 		/*
 		 * Register for gpu bus scaling if governor support
