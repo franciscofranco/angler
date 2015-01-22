@@ -25,6 +25,8 @@ struct power_params {
 	uint32_t ss_power;		/* Steady state power */
 	uint32_t energy_overhead;	/* Enter + exit over head */
 	uint32_t time_overhead_us;	/* Enter + exit overhead */
+	uint32_t residencies[NR_LPM_LEVELS];
+	uint32_t max_residency;
 };
 
 struct lpm_cpu_level {
@@ -46,6 +48,9 @@ struct lpm_level_avail {
 	struct kobject *kobj;
 	struct kobj_attribute idle_enabled_attr;
 	struct kobj_attribute suspend_enabled_attr;
+	void *data;
+	int idx;
+	bool cpu_node;
 };
 
 struct lpm_cluster_level {
@@ -55,6 +60,7 @@ struct lpm_cluster_level {
 	struct cpumask num_cpu_votes;
 	struct power_params pwr;
 	bool notify_rpm;
+	bool disable_dynamic_routing;
 	bool sync_level;
 	bool last_core_only;
 	struct lpm_level_avail available;
@@ -92,6 +98,7 @@ struct lpm_cluster {
 
 int set_l2_mode(struct low_power_ops *ops, int mode, bool notify_rpm);
 int set_cci_mode(struct low_power_ops *ops, int mode, bool notify_rpm);
+void lpm_suspend_wake_time(uint64_t wakeup_time);
 
 struct lpm_cluster *lpm_of_parse_cluster(struct platform_device *pdev);
 void free_cluster_node(struct lpm_cluster *cluster);
@@ -102,7 +109,7 @@ bool lpm_cpu_mode_allow(unsigned int cpu,
 		unsigned int mode, bool from_idle);
 bool lpm_cluster_mode_allow(struct lpm_cluster *cluster,
 		unsigned int mode, bool from_idle);
-
+uint32_t *get_per_cpu_max_residency(int cpu);
 extern struct lpm_cluster *lpm_root_node;
 
 #ifdef CONFIG_SMP
