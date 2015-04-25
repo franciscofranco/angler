@@ -312,9 +312,14 @@
 				qcom,supply-enable-load = <100000>;
 				qcom,supply-disable-load = <100>;
 			};
+		};
 
-			qcom,ctrl-supply-entry@1 {
-				reg = <1>;
+		qcom,phy-supply-entries {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			qcom,phy-supply-entry@0 {
+				reg = <0>;
 				qcom,supply-name = "vddio";
 				qcom,supply-min-voltage = <1800000>;
 				qcom,supply-max-voltage = <1800000>;
@@ -323,8 +328,8 @@
 				qcom,supply-post-on-sleep = <5>;
 			};
 
-			qcom,ctrl-supply-entry@2 {
-				reg = <2>;
+			qcom,phy-supply-entry@1 {
+				reg = <1>;
 				qcom,supply-name = "vcca";
 				qcom,supply-min-voltage = <1000000>;
 				qcom,supply-max-voltage = <1000000>;
@@ -429,9 +434,14 @@
 				qcom,supply-enable-load = <100000>;
 				qcom,supply-disable-load = <100>;
 			};
+		};
 
-			qcom,ctrl-supply-entry@1 {
-				reg = <1>;
+		qcom,phy-supply-entries {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			qcom,phy-supply-entry@0 {
+				reg = <0>;
 				qcom,supply-name = "vddio";
 				qcom,supply-min-voltage = <1800000>;
 				qcom,supply-max-voltage = <1800000>;
@@ -440,8 +450,8 @@
 				qcom,supply-post-on-sleep = <5>;
 			};
 
-			qcom,ctrl-supply-entry@2 {
-				reg = <2>;
+			qcom,phy-supply-entry@1 {
+				reg = <1>;
 				qcom,supply-name = "vcca";
 				qcom,supply-min-voltage = <1000000>;
 				qcom,supply-max-voltage = <1000000>;

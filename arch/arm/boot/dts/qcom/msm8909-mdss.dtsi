@@ -105,21 +105,11 @@
 			};
 		};
 
-		qcom,panel-supply-entries {
+		qcom,phy-supply-entries {
 			#address-cells = <1>;
 			#size-cells = <0>;
-
-			qcom,panel-supply-entry@0 {
+			qcom,phy-supply-entry@0 {
 				reg = <0>;
-				qcom,supply-name = "vdd";
-				qcom,supply-min-voltage = <2850000>;
-				qcom,supply-max-voltage = <2850000>;
-				qcom,supply-enable-load = <100000>;
-				qcom,supply-disable-load = <100>;
-			};
-
-			qcom,panel-supply-entry@1 {
-				reg = <1>;
 				qcom,supply-name = "vddio";
 				qcom,supply-min-voltage = <1800000>;
 				qcom,supply-max-voltage = <1800000>;
