@@ -1352,7 +1352,12 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
 	    (p->nr_cpus_allowed > 1)) {
 		int target = find_lowest_rq(p);
 
-		if (target != -1)
+		/*
+		 * Don't bother moving it if the destination CPU is
+		 * not running a lower priority task.
+		 */
+		if (target != -1 &&
+		    p->prio < cpu_rq(target)->rt.highest_prio.curr)
 			cpu = target;
 	}
 	rcu_read_unlock();
@@ -1454,10 +1459,10 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 	 * put_prev_task. A stale value can cause us to over-charge execution
 	 * time to real-time task, that could trigger throttling unnecessarily
 	 */
-	if (rq->skip_clock_update > 0) {
+	if (rq->skip_clock_update > 0)
 		rq->skip_clock_update = 0;
-		update_rq_clock(rq);
-	}
+
+	update_rq_clock(rq);
 	p = rt_task_of(rt_se);
 	p->se.exec_start = rq->clock_task;
 
@@ -1553,6 +1558,7 @@ static int find_lowest_rq_hmp(struct task_struct *task)
 {
 	struct cpumask *lowest_mask = __get_cpu_var(local_cpu_mask);
 	int cpu_cost, min_cost = INT_MAX;
+	u64 cpu_load, min_load = ULLONG_MAX;
 	int best_cpu = -1;
 	int i;
 
@@ -1586,11 +1592,26 @@ static int find_lowest_rq_hmp(struct task_struct *task)
 		if (sched_boost() && capacity(rq) != max_capacity)
 			continue;
 
-		if (cpu_cost < min_cost && !sched_cpu_high_irqload(i)) {
+		if (power_delta_exceeded(cpu_cost, min_cost)) {
+			if (cpu_cost > min_cost)
+				continue;
+
 			min_cost = cpu_cost;
+			min_load = ULLONG_MAX;
+			best_cpu = -1;
+		}
+
+		if (sched_cpu_high_irqload(i))
+			continue;
+
+		cpu_load = scale_load_to_cpu(
+				rq->hmp_stats.cumulative_runnable_avg, i);
+		if (cpu_load < min_load) {
+			min_load = cpu_load;
 			best_cpu = i;
 		}
 	}
+
 	return best_cpu;
 }
 
@@ -1694,6 +1715,16 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 			break;
 
 		lowest_rq = cpu_rq(cpu);
+
+		if (lowest_rq->rt.highest_prio.curr <= task->prio) {
+			/*
+			 * Target rq has tasks of equal or higher priority,
+			 * retrying does not release any lock and is unlikely
+			 * to yield a different result.
+			 */
+			lowest_rq = NULL;
+			break;
+		}
 
 		/* if the prio of this runqueue changed, try again */
 		if (double_lock_balance(rq, lowest_rq)) {

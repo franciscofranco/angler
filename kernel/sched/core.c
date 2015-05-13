@@ -345,6 +345,19 @@ __read_mostly int scheduler_running;
 int sysctl_sched_rt_runtime = 950000;
 
 /*
+ * Number of sched_yield calls that result in a thread yielding
+ * to itself before a sleep is injected in its next sched_yield call
+ * Setting this to -1 will disable adding sleep in sched_yield
+ */
+const_debug int sysctl_sched_yield_sleep_threshold = 4;
+
+/*
+ * Sleep duration in us used when sched_yield_sleep_threshold
+ * is exceeded.
+ */
+const_debug unsigned int sysctl_sched_yield_sleep_duration = 50;
+
+/*
  * __task_rq_lock - lock the rq @p resides on.
  */
 static inline struct rq *__task_rq_lock(struct task_struct *p)
@@ -559,6 +572,39 @@ static inline void init_hrtick(void)
 #endif	/* CONFIG_SCHED_HRTICK */
 
 /*
+ * cmpxchg based fetch_or, macro so it works for different integer types
+ */
+#define fetch_or(ptr, val)						\
+({	typeof(*(ptr)) __old, __val = *(ptr);				\
+ 	for (;;) {							\
+ 		__old = cmpxchg((ptr), __val, __val | (val));		\
+ 		if (__old == __val)					\
+ 			break;						\
+ 		__val = __old;						\
+ 	}								\
+ 	__old;								\
+})
+
+#ifdef TIF_POLLING_NRFLAG
+/*
+ * Atomically set TIF_NEED_RESCHED and test for TIF_POLLING_NRFLAG,
+ * this avoids any races wrt polling state changes and thereby avoids
+ * spurious IPIs.
+ */
+static bool set_nr_and_not_polling(struct task_struct *p)
+{
+	struct thread_info *ti = task_thread_info(p);
+	return !(fetch_or(&ti->flags, _TIF_NEED_RESCHED) & _TIF_POLLING_NRFLAG);
+}
+#else
+static bool set_nr_and_not_polling(struct task_struct *p)
+{
+	set_tsk_need_resched(p);
+	return true;
+}
+#endif
+
+/*
  * resched_task - mark a task 'to be rescheduled now'.
  *
  * On UP this means the setting of the need_resched flag, on SMP it
@@ -575,15 +621,14 @@ void resched_task(struct task_struct *p)
 	if (test_tsk_need_resched(p))
 		return;
 
-	set_tsk_need_resched(p);
-
 	cpu = task_cpu(p);
-	if (cpu == smp_processor_id())
-		return;
 
-	/* NEED_RESCHED must be visible before we test polling */
-	smp_mb();
-	if (!tsk_is_polling(p))
+	if (cpu == smp_processor_id()) {
+		set_tsk_need_resched(p);
+		return;
+	}
+
+	if (set_nr_and_not_polling(p))
 		smp_send_reschedule(cpu);
 }
 
@@ -1083,6 +1128,26 @@ static int __init set_sched_enable_power_aware(char *str)
 
 early_param("sched_enable_power_aware", set_sched_enable_power_aware);
 
+bool have_sched_same_pwr_cost_cpus;
+cpumask_var_t sched_same_pwr_cost_cpus;
+static int __init set_sched_same_power_cost_cpus(char *str)
+{
+	char buf[64];
+
+	alloc_bootmem_cpumask_var(&sched_same_pwr_cost_cpus);
+	if (cpulist_parse(str, sched_same_pwr_cost_cpus) < 0) {
+		pr_warn("sched: Incorrect sched_same_power_cost_cpus cpumask\n");
+		return -EINVAL;
+	}
+
+	cpulist_scnprintf(buf, sizeof(buf), sched_same_pwr_cost_cpus);
+	if (!cpumask_empty(sched_same_pwr_cost_cpus))
+		have_sched_same_pwr_cost_cpus = true;
+	return 0;
+}
+
+early_param("sched_same_power_cost_cpus", set_sched_same_power_cost_cpus);
+
 static inline int got_boost_kick(void)
 {
 	int cpu = smp_processor_id();
@@ -1268,9 +1333,7 @@ static inline u64 scale_exec_time(u64 delta, struct rq *rq)
 	unsigned int cur_freq = rq->cur_freq;
 	int sf;
 
-	if (unlikely(cur_freq > max_possible_freq ||
-		     (cur_freq == rq->max_freq &&
-		      rq->max_freq < rq->max_possible_freq)))
+	if (unlikely(cur_freq > max_possible_freq))
 		cur_freq = rq->max_possible_freq;
 
 	/* round up div64 */
@@ -1328,6 +1391,8 @@ static inline unsigned int load_to_freq(struct rq *rq, u64 load)
 static int send_notification(struct rq *rq)
 {
 	unsigned int cur_freq, freq_required;
+	unsigned long flags;
+	int rc = 0;
 
 	if (!sched_enable_hmp)
 		return 0;
@@ -1338,7 +1403,14 @@ static int send_notification(struct rq *rq)
 	if (nearly_same_freq(cur_freq, freq_required))
 		return 0;
 
-	return 1;
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	if (!rq->notifier_sent) {
+		rq->notifier_sent = 1;
+		rc = 1;
+	}
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+
+	return rc;
 }
 
 /* Alert governor if there is a need to change frequency */
@@ -2027,6 +2099,86 @@ const char *sched_window_reset_reasons[] = {
 	"MIGRATION_FIXUP_CHANGE",
 	"FREQ_ACCOUNT_WAIT_TIME_CHANGE"};
 
+/* Should be called under rq lock held */
+static void update_power_cost_table(struct rq *rq)
+{
+	int i;
+	u64 max_demand;
+	unsigned int max_freq, freqs, load;
+	struct cpu_pwr_stats *per_cpu_info = get_cpu_pwr_stats();
+	struct cpu_pstate_pwr *costs;
+	struct hmp_power_cost_table *ptr;
+	struct hmp_power_cost *map;
+
+	ptr = &rq->pwr_cost_table;
+	if (!sysctl_sched_enable_power_aware ||
+	    (!per_cpu_info || !per_cpu_info[rq->cpu].ptable))
+		return;
+
+	freqs = per_cpu_info[rq->cpu].len;
+	BUG_ON(freqs <= 0);
+
+	if (!ptr->len) {
+		map = kmalloc(sizeof(*(ptr->map)) * freqs, GFP_ATOMIC);
+		BUG_ON(!map);
+	} else {
+		BUG_ON(freqs != ptr->len);
+		map = ptr->map;
+	}
+	max_demand = div64_u64(max_task_load(), max_possible_capacity);
+	max_demand *= rq->max_possible_capacity;
+
+	costs = per_cpu_info[rq->cpu].ptable;
+	max_freq = costs[freqs - 1].freq;
+	for (i = 0; i < freqs; i++) {
+		load = costs[i].freq * 100 / max_freq;
+		map[i].freq = costs[i].freq;
+		map[i].power_cost = &costs[i].power;
+		map[i].demand = div64_u64(max_demand * load, 100);
+	}
+
+	/*
+	 * power_cost() doesn't hold rq lock, so set the rq->pwr_cost_table
+	 * afterwards.
+	 */
+	ptr->map = map;
+	ptr->len = freqs;
+}
+
+int sched_enable_power_aware_handler(struct ctl_table *table, int write,
+				     void __user *buffer, size_t *lenp,
+				     loff_t *ppos)
+{
+	int ret;
+	int i;
+	unsigned long flags;
+	unsigned int *data = (unsigned int *)table->data;
+	unsigned int old_val = *data;
+
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (ret || !write)
+		goto done;
+
+	if (write && (old_val == *data))
+		goto done;
+
+	if (*data != 0 && *data != 1) {
+		ret = -EINVAL;
+		*data = old_val;
+		goto done;
+	}
+
+	if (*data == 1) {
+		for_each_possible_cpu(i) {
+			raw_spin_lock_irqsave(&cpu_rq(i)->lock, flags);
+			update_power_cost_table(cpu_rq(i));
+			raw_spin_unlock_irqrestore(&cpu_rq(i)->lock, flags);
+		}
+	}
+done:
+	return ret;
+}
+
 /* Called with IRQs enabled */
 void reset_all_window_stats(u64 window_start, unsigned int window_size)
 {
@@ -2071,6 +2223,9 @@ void reset_all_window_stats(u64 window_start, unsigned int window_size)
 		reset_cpu_hmp_stats(cpu, 1);
 
 		fixup_nr_big_small_task(cpu, 0);
+
+		if (window_size)
+			update_power_cost_table(rq);
 	}
 
 	if (sched_window_stats_policy != sysctl_sched_window_stats_policy) {
@@ -2118,35 +2273,93 @@ void reset_all_window_stats(u64 window_start, unsigned int window_size)
 
 #ifdef CONFIG_SCHED_FREQ_INPUT
 
-unsigned long sched_get_busy(int cpu)
+static inline u64
+scale_load_to_freq(u64 load, unsigned int src_freq, unsigned int dst_freq)
+{
+	return div64_u64(load * (u64)src_freq, (u64)dst_freq);
+}
+
+void sched_get_cpus_busy(unsigned long *busy, const struct cpumask *query_cpus)
 {
 	unsigned long flags;
-	struct rq *rq = cpu_rq(cpu);
-	u64 load;
+	struct rq *rq;
+	const int cpus = cpumask_weight(query_cpus);
+	u64 load[cpus];
+	unsigned int cur_freq[cpus], max_freq[cpus];
+	int notifier_sent[cpus];
+	int cpu, i = 0;
+	unsigned int window_size;
+
+	if (unlikely(cpus == 0))
+		return;
 
 	/*
 	 * This function could be called in timer context, and the
 	 * current task may have been executing for a long time. Ensure
 	 * that the window stats are current by doing an update.
 	 */
-	raw_spin_lock_irqsave(&rq->lock, flags);
-	update_task_ravg(rq->curr, rq, TASK_UPDATE, sched_clock(), 0);
-	load = rq->old_busy_time = rq->prev_runnable_sum;
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
+	local_irq_save(flags);
+	for_each_cpu(cpu, query_cpus)
+		raw_spin_lock(&cpu_rq(cpu)->lock);
 
-	/*
-	 * Scale load in reference to rq->max_possible_freq.
-	 *
-	 * Note that scale_load_to_cpu() scales load in reference to
-	 * rq->max_freq
-	 */
-	load = scale_load_to_cpu(load, cpu);
-	load = div64_u64(load * (u64)rq->max_freq, (u64)rq->max_possible_freq);
-	load = div64_u64(load, NSEC_PER_USEC);
+	window_size = sched_ravg_window;
 
-	trace_sched_get_busy(cpu, load);
+	for_each_cpu(cpu, query_cpus) {
+		rq = cpu_rq(cpu);
 
-	return load;
+		update_task_ravg(rq->curr, rq, TASK_UPDATE, sched_clock(), 0);
+		load[i] = rq->old_busy_time = rq->prev_runnable_sum;
+		/*
+		 * Scale load in reference to rq->max_possible_freq.
+		 *
+		 * Note that scale_load_to_cpu() scales load in reference to
+		 * rq->max_freq.
+		 */
+		load[i] = scale_load_to_cpu(load[i], cpu);
+
+		notifier_sent[i] = rq->notifier_sent;
+		rq->notifier_sent = 0;
+		cur_freq[i] = rq->cur_freq;
+		max_freq[i] = rq->max_freq;
+		i++;
+	}
+
+	for_each_cpu(cpu, query_cpus)
+		raw_spin_unlock(&(cpu_rq(cpu))->lock);
+	local_irq_restore(flags);
+
+	i = 0;
+	for_each_cpu(cpu, query_cpus) {
+		rq = cpu_rq(cpu);
+
+		if (!notifier_sent[i]) {
+			load[i] = scale_load_to_freq(load[i], max_freq[i],
+						     cur_freq[i]);
+			if (load[i] > window_size)
+				load[i] = window_size;
+			load[i] = scale_load_to_freq(load[i], cur_freq[i],
+						     rq->max_possible_freq);
+		} else {
+			load[i] = scale_load_to_freq(load[i], max_freq[i],
+						     rq->max_possible_freq);
+		}
+
+		busy[i] = div64_u64(load[i], NSEC_PER_USEC);
+
+		trace_sched_get_busy(cpu, busy[i]);
+		i++;
+	}
+}
+
+unsigned long sched_get_busy(int cpu)
+{
+	struct cpumask query_cpu = CPU_MASK_NONE;
+	unsigned long busy;
+
+	cpumask_set_cpu(cpu, &query_cpu);
+	sched_get_cpus_busy(&busy, &query_cpu);
+
+	return busy;
 }
 
 void sched_set_io_is_busy(int val)
@@ -2372,6 +2585,27 @@ static int compute_load_scale_factor(int cpu)
 	return load_scale;
 }
 
+#define sched_up_down_migrate_auto_update 1
+static void check_for_up_down_migrate_update(const struct cpumask *cpus)
+{
+	int i = cpumask_first(cpus);
+	struct rq *rq = cpu_rq(i);
+
+	if (!sched_up_down_migrate_auto_update)
+		return;
+
+	if (rq->max_possible_capacity == max_possible_capacity)
+		return;
+
+	if (rq->max_possible_freq == rq->max_freq)
+		up_down_migrate_scale_factor = 1024;
+	else
+		up_down_migrate_scale_factor = (1024 * rq->max_possible_freq)/
+					rq->max_freq;
+
+	update_up_down_migrate();
+}
+
 static int cpufreq_notifier_policy(struct notifier_block *nb,
 		unsigned long val, void *data)
 {
@@ -2469,6 +2703,8 @@ static int cpufreq_notifier_policy(struct notifier_block *nb,
 
 			if (mplsf > highest_mplsf)
 				highest_mplsf = mplsf;
+
+			update_power_cost_table(rq);
 		}
 	}
 
@@ -2478,6 +2714,7 @@ static int cpufreq_notifier_policy(struct notifier_block *nb,
 	}
 
 	__update_min_max_capacity();
+	check_for_up_down_migrate_update(policy->related_cpus);
 	post_big_small_task_count_change(cpu_possible_mask);
 
 	return 0;
@@ -2510,6 +2747,19 @@ static int cpufreq_notifier_trans(struct notifier_block *nb,
 	return 0;
 }
 
+static int pwr_stats_ready_notifier(struct notifier_block *nb,
+				    unsigned long cpu, void *data)
+{
+	struct rq *rq = cpu_rq(cpu);
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	update_power_cost_table(rq);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+
+	return 0;
+}
+
 static struct notifier_block notifier_policy_block = {
 	.notifier_call = cpufreq_notifier_policy
 };
@@ -2517,6 +2767,15 @@ static struct notifier_block notifier_policy_block = {
 static struct notifier_block notifier_trans_block = {
 	.notifier_call = cpufreq_notifier_trans
 };
+
+static struct notifier_block notifier_pwr_stats_ready = {
+	.notifier_call = pwr_stats_ready_notifier
+};
+
+int __weak register_cpu_pwr_stats_ready_notifier(struct notifier_block *nb)
+{
+	return 1;
+}
 
 static int register_sched_callback(void)
 {
@@ -2531,6 +2790,8 @@ static int register_sched_callback(void)
 	if (!ret)
 		ret = cpufreq_register_notifier(&notifier_trans_block,
 						CPUFREQ_TRANSITION_NOTIFIER);
+
+	register_cpu_pwr_stats_ready_notifier(&notifier_pwr_stats_ready);
 
 	return 0;
 }
@@ -3129,6 +3390,9 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	struct rq *rq;
 	u64 wallclock;
 #endif
+	bool freq_notif_allowed = !(wake_flags & WF_NO_NOTIFIER);
+
+	wake_flags &= ~WF_NO_NOTIFIER;
 
 	/*
 	 * If we are going to wake up a thread waiting for CONDITION we
@@ -3149,6 +3413,25 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		goto stat;
 
 #ifdef CONFIG_SMP
+	/*
+	 * Ensure we load p->on_cpu _after_ p->on_rq, otherwise it would be
+	 * possible to, falsely, observe p->on_cpu == 0.
+	 *
+	 * One must be running (->on_cpu == 1) in order to remove oneself
+	 * from the runqueue.
+	 *
+	 *  [S] ->on_cpu = 1;	[L] ->on_rq
+	 *      UNLOCK rq->lock
+	 *			RMB
+	 *      LOCK   rq->lock
+	 *  [S] ->on_rq = 0;    [L] ->on_cpu
+	 *
+	 * Pairs with the full barrier implied in the UNLOCK+LOCK on rq->lock
+	 * from the consecutive calls to schedule(); the first switching to our
+	 * task, the second putting it to sleep.
+	 */
+	smp_rmb();
+
 	/*
 	 * If the owning (remote) cpu is still in the middle of schedule() with
 	 * this task as prev, wait until its done referencing the task.
@@ -3215,11 +3498,14 @@ out:
 		atomic_notifier_call_chain(&migration_notifier_head,
 					   0, (void *)&mnd);
 
-	if (!same_freq_domain(src_cpu, cpu)) {
-		check_for_freq_change(cpu_rq(cpu));
-		check_for_freq_change(cpu_rq(src_cpu));
-	} else if (heavy_task)
-		check_for_freq_change(cpu_rq(cpu));
+	if (freq_notif_allowed) {
+		if (!same_freq_domain(src_cpu, cpu)) {
+			check_for_freq_change(cpu_rq(cpu));
+			check_for_freq_change(cpu_rq(src_cpu));
+		} else if (heavy_task) {
+			check_for_freq_change(cpu_rq(cpu));
+		}
+	}
 
 	return success;
 }
@@ -3282,10 +3568,29 @@ out:
  */
 int wake_up_process(struct task_struct *p)
 {
-	WARN_ON(task_is_stopped_or_traced(p));
 	return try_to_wake_up(p, TASK_NORMAL, 0);
 }
 EXPORT_SYMBOL(wake_up_process);
+
+/**
+ * wake_up_process_no_notif - Wake up a specific process without notifying
+ * governor
+ * @p: The process to be woken up.
+ *
+ * Attempt to wake up the nominated process and move it to the set of runnable
+ * processes.
+ *
+ * Return: 1 if the process was woken up, 0 if it was already running.
+ *
+ * It may be assumed that this function implies a write memory barrier before
+ * changing the task state if and only if any tasks are woken up.
+ */
+int wake_up_process_no_notif(struct task_struct *p)
+{
+	WARN_ON(task_is_stopped_or_traced(p));
+	return try_to_wake_up(p, TASK_NORMAL, WF_NO_NOTIFIER);
+}
+EXPORT_SYMBOL(wake_up_process_no_notif);
 
 int wake_up_state(struct task_struct *p, unsigned int state)
 {
@@ -4443,6 +4748,20 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	struct rq *rq;
 	u64 ns = 0;
 
+#if defined(CONFIG_64BIT) && defined(CONFIG_SMP)
+	/*
+	 * 64-bit doesn't need locks to atomically read a 64bit value.
+	 * So we have a optimization chance when the task's delta_exec is 0.
+	 * Reading ->on_cpu is racy, but this is ok.
+	 *
+	 * If we race with it leaving cpu, we'll take a lock. So we're correct.
+	 * If we race with it entering cpu, unaccounted time is 0. This is
+	 * indistinguishable from the read occurring a few cycles earlier.
+	 */
+	if (!p->on_cpu)
+		return p->se.sum_exec_runtime;
+#endif
+
 	rq = task_rq_lock(p, &flags);
 	ns = p->se.sum_exec_runtime + do_task_delta_exec(p, rq);
 	task_rq_unlock(rq, p, &flags);
@@ -4761,6 +5080,7 @@ need_resched:
 	if (likely(prev != next)) {
 		rq->nr_switches++;
 		rq->curr = next;
+		prev->yield_count = 0;
 		++*switch_count;
 
 #ifdef CONFIG_ARCH_WANTS_CTXSW_LOGGING
@@ -4776,8 +5096,10 @@ need_resched:
 		 */
 		cpu = smp_processor_id();
 		rq = cpu_rq(cpu);
-	} else
+	} else {
+		prev->yield_count++;
 		raw_spin_unlock_irq(&rq->lock);
+	}
 
 	post_schedule(rq);
 
@@ -5390,10 +5712,13 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 	if (running)
 		p->sched_class->put_prev_task(rq, p);
 
-	if (rt_prio(prio))
+	if (rt_prio(prio)) {
 		p->sched_class = &rt_sched_class;
-	else
+	} else {
+		if (rt_prio(oldprio))
+			p->rt.timeout = 0;
 		p->sched_class = &fair_sched_class;
+	}
 
 	p->prio = prio;
 
@@ -5775,8 +6100,13 @@ change:
 
 	if (running)
 		p->sched_class->set_curr_task(rq);
-	if (on_rq)
-		enqueue_task(rq, p, 0);
+	if (on_rq) {
+		/*
+		 * We enqueue to tail when the priority of a task is
+		 * increased (user space view).
+		 */
+		enqueue_task(rq, p, oldprio <= p->prio ? ENQUEUE_HEAD : 0);
+	}
 
 	check_class_changed(rq, p, prev_class, oldprio);
 	task_rq_unlock(rq, p, &flags);
@@ -5831,6 +6161,7 @@ int sched_setscheduler_nocheck(struct task_struct *p, int policy,
 	};
 	return __sched_setscheduler(p, &attr, false);
 }
+EXPORT_SYMBOL(sched_setscheduler_nocheck);
 
 static int
 do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
@@ -6306,6 +6637,8 @@ SYSCALL_DEFINE0(sched_yield)
 	struct rq *rq = this_rq_lock();
 
 	schedstat_inc(rq, yld_count);
+	if (rq->curr->yield_count == sysctl_sched_yield_sleep_threshold)
+		schedstat_inc(rq, yield_sleep_count);
 	current->sched_class->yield_task(rq);
 
 	/*
@@ -6317,7 +6650,11 @@ SYSCALL_DEFINE0(sched_yield)
 	do_raw_spin_unlock(&rq->lock);
 	sched_preempt_enable_no_resched();
 
-	schedule();
+	if (rq->curr->yield_count == sysctl_sched_yield_sleep_threshold)
+		usleep_range(sysctl_sched_yield_sleep_duration,
+				sysctl_sched_yield_sleep_duration + 5);
+	else
+		schedule();
 
 	return 0;
 }
@@ -6667,7 +7004,7 @@ void show_state_filter(unsigned long state_filter)
 		"  task                        PC stack   pid father\n");
 #endif
 	rcu_read_lock();
-	do_each_thread(g, p) {
+	for_each_process_thread(g, p) {
 		/*
 		 * reset the NMI-timeout, listing all files on a slow
 		 * console might take a lot of time:
@@ -6675,7 +7012,7 @@ void show_state_filter(unsigned long state_filter)
 		touch_nmi_watchdog();
 		if (!state_filter || (p->state & state_filter))
 			sched_show_task(p);
-	} while_each_thread(g, p);
+	}
 
 	touch_all_softlockup_watchdogs();
 
@@ -6866,9 +7203,9 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 	 * placed properly.
 	 */
 	if (p->on_rq) {
-		dequeue_task(rq_src, p, 0);
+		dequeue_task(rq_src, p, DEQUEUE_MIGRATING);
 		set_task_cpu(p, dest_cpu);
-		enqueue_task(rq_dest, p, 0);
+		enqueue_task(rq_dest, p, ENQUEUE_MIGRATING);
 		check_preempt_curr(rq_dest, p, 0);
 		moved = true;
 	}
@@ -9064,6 +9401,7 @@ void __init sched_init(void)
 		rq->wakeup_latency = 0;
 		rq->wakeup_energy = 0;
 #ifdef CONFIG_SCHED_HMP
+		cpumask_set_cpu(i, &rq->freq_domain_cpumask);
 		rq->cur_freq = 1;
 		rq->max_freq = 1;
 		rq->min_freq = 1;
@@ -9086,6 +9424,7 @@ void __init sched_init(void)
 #ifdef CONFIG_SCHED_FREQ_INPUT
 		rq->old_busy_time = 0;
 		rq->curr_runnable_sum = rq->prev_runnable_sum = 0;
+		rq->notifier_sent = 0;
 #endif
 #endif
 
@@ -9224,7 +9563,7 @@ void normalize_rt_tasks(void)
 	struct rq *rq;
 
 	read_lock_irqsave(&tasklist_lock, flags);
-	do_each_thread(g, p) {
+	for_each_process_thread(g, p) {
 		/*
 		 * Only normalize user tasks:
 		 */
@@ -9255,8 +9594,7 @@ void normalize_rt_tasks(void)
 
 		__task_rq_unlock(rq);
 		raw_spin_unlock(&p->pi_lock);
-	} while_each_thread(g, p);
-
+	}
 	read_unlock_irqrestore(&tasklist_lock, flags);
 }
 
@@ -9452,10 +9790,10 @@ static inline int tg_has_rt_tasks(struct task_group *tg)
 {
 	struct task_struct *g, *p;
 
-	do_each_thread(g, p) {
+	for_each_process_thread(g, p) {
 		if (rt_task(p) && task_rq(p)->rt.tg == tg)
 			return 1;
-	} while_each_thread(g, p);
+	}
 
 	return 0;
 }
