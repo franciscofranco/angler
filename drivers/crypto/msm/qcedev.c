@@ -1230,7 +1230,7 @@ static int qcedev_vbuf_ablk_cipher(struct qcedev_async_req *areq,
 	k_buf_src = kmalloc(QCE_MAX_OPER_DATA + CACHE_LINE_SIZE * 2,
 				GFP_KERNEL);
 	if (k_buf_src == NULL) {
-		pr_err("%s: Can't Allocate memory: k_buf_src 0x%lx\n",
+		pr_debug("%s: Can't Allocate memory: k_buf_src 0x%lx\n",
 					__func__, (uintptr_t)k_buf_src);
 		return -ENOMEM;
 	}
