@@ -338,7 +338,7 @@ static int cpu_power_select(struct cpuidle_device *dev,
 	if (modified_time_us)
 		msm_pm_set_timer(modified_time_us);
 
-	trace_cpu_idle_enter(best_level, sleep_us, latency_us, next_event_us);
+	trace_cpu_power_select(best_level, sleep_us, latency_us, next_event_us);
 
 	return best_level;
 }
@@ -715,6 +715,7 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	sched_set_cpu_cstate(smp_processor_id(), idx + 1,
 		pwr_params->energy_overhead, pwr_params->latency_us);
 
+	trace_cpu_idle_enter(idx);
 	cpu_prepare(cluster, idx, true);
 
 	cluster_prepare(cluster, cpumask, idx, true);
@@ -728,7 +729,6 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 		update_debug_pc_event(CPU_EXIT, idx, success, 0xdeaffeed,
 					true);
 	lpm_stats_cpu_exit(idx, success);
-	trace_cpu_idle_exit(idx, success);
 	cluster_unprepare(cluster, cpumask, idx, true);
 	cpu_unprepare(cluster, idx, true);
 
@@ -737,10 +737,11 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	time = ktime_to_ns(ktime_get()) - time;
 	do_div(time, 1000);
 	dev->last_residency = (int)time;
+	trace_cpu_idle_exit(idx, success);
 
 exit:
-	local_irq_enable();
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, dev->cpu);
+	local_irq_enable();
 	return idx;
 }
 
