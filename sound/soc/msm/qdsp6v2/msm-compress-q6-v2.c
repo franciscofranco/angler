@@ -102,7 +102,8 @@ struct msm_compr_gapless_state {
 };
 
 static unsigned int supported_sample_rates[] = {
-	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
+	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000,
+	88200, 96000, 176400, 192000
 };
 
 struct msm_compr_pdata {
@@ -380,7 +381,16 @@ static void compr_event_handler(uint32_t opcode,
 			       payload[3],
 			       payload[0],
 				prtd->byte_offset, prtd->copied_total, token);
-			atomic_set(&prtd->start, 0);
+
+			if (atomic_read(&prtd->drain) && prtd->last_buffer) {
+				pr_debug("wake up on drain\n");
+				prtd->drain_ready = 1;
+				wake_up(&prtd->drain_wait);
+				atomic_set(&prtd->drain, 0);
+				prtd->last_buffer = 0;
+			} else {
+				atomic_set(&prtd->start, 0);
+			}
 		} else {
 			pr_debug("ASM_DATA_EVENT_WRITE_DONE_V2 offset %d, length %d\n",
 				 prtd->byte_offset, token);
@@ -577,6 +587,19 @@ static void compr_event_handler(uint32_t opcode,
 			  __func__, opcode);
 		break;
 	}
+}
+
+static int msm_compr_get_partial_drain_delay(int frame_sz, int sample_rate)
+{
+	int delay_time_ms = 0;
+
+	delay_time_ms = ((DSP_NUM_OUTPUT_FRAME_BUFFERED * frame_sz * 1000) /
+			sample_rate) + DSP_PP_BUFFERING_IN_MSEC;
+	delay_time_ms = delay_time_ms > PARTIAL_DRAIN_ACK_EARLY_BY_MSEC ?
+			delay_time_ms - PARTIAL_DRAIN_ACK_EARLY_BY_MSEC : 0;
+
+	pr_debug("%s: partial drain delay %d\n", __func__, delay_time_ms);
+	return delay_time_ms;
 }
 
 static void populate_codec_list(struct msm_compr_audio *prtd)
@@ -1051,6 +1074,8 @@ static int msm_compr_free(struct snd_compr_stream *cstream)
 		pr_err("%s prtd is null\n", __func__);
 		return 0;
 	}
+	prtd->cmd_interrupt = 1;
+	wake_up(&prtd->drain_wait);
 	pdata = snd_soc_platform_get_drvdata(soc_prtd->platform);
 	ac = prtd->audio_client;
 	if (!pdata || !ac) {
@@ -1138,8 +1163,9 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 {
 	struct snd_compr_runtime *runtime = cstream->runtime;
 	struct msm_compr_audio *prtd = runtime->private_data;
-	int ret = 0, frame_sz = 0, delay_time_ms = 0;
+	int ret = 0, frame_sz = 0;
 	int i, num_rates;
+	bool is_format_gapless = false;
 
 	pr_debug("%s\n", __func__);
 
@@ -1171,6 +1197,7 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 	case SND_AUDIOCODEC_PCM: {
 		pr_debug("SND_AUDIOCODEC_PCM\n");
 		prtd->codec = FORMAT_LINEAR_PCM;
+		is_format_gapless = true;
 		break;
 	}
 
@@ -1178,6 +1205,7 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 		pr_debug("SND_AUDIOCODEC_MP3\n");
 		prtd->codec = FORMAT_MP3;
 		frame_sz = MP3_OUTPUT_FRAME_SZ;
+		is_format_gapless = true;
 		break;
 	}
 
@@ -1185,6 +1213,7 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 		pr_debug("SND_AUDIOCODEC_AAC\n");
 		prtd->codec = FORMAT_MPEG4_AAC;
 		frame_sz = AAC_OUTPUT_FRAME_SZ;
+		is_format_gapless = true;
 		break;
 	}
 
@@ -1192,6 +1221,7 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 		pr_debug("SND_AUDIOCODEC_AC3\n");
 		prtd->codec = FORMAT_AC3;
 		frame_sz = AC3_OUTPUT_FRAME_SZ;
+		is_format_gapless = true;
 		break;
 	}
 
@@ -1199,6 +1229,7 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 		pr_debug("SND_AUDIOCODEC_EAC3\n");
 		prtd->codec = FORMAT_EAC3;
 		frame_sz = EAC3_OUTPUT_FRAME_SZ;
+		is_format_gapless = true;
 		break;
 	}
 
@@ -1223,6 +1254,13 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 	case SND_AUDIOCODEC_FLAC: {
 		pr_debug("%s: SND_AUDIOCODEC_FLAC\n", __func__);
 		prtd->codec = FORMAT_FLAC;
+		/*
+		 * DSP bufferring is based on blk size,
+		 * consider mininum buffering to rule out any false wait
+		 */
+		frame_sz =
+			prtd->codec_param.codec.options.flac_dec.min_blk_size;
+		is_format_gapless = true;
 		break;
 	}
 
@@ -1231,11 +1269,11 @@ static int msm_compr_set_params(struct snd_compr_stream *cstream,
 		return -EINVAL;
 	}
 
-	delay_time_ms = ((DSP_NUM_OUTPUT_FRAME_BUFFERED * frame_sz * 1000) /
-			prtd->sample_rate) + DSP_PP_BUFFERING_IN_MSEC;
-	delay_time_ms = delay_time_ms > PARTIAL_DRAIN_ACK_EARLY_BY_MSEC ?
-			delay_time_ms - PARTIAL_DRAIN_ACK_EARLY_BY_MSEC : 0;
-	prtd->partial_drain_delay = delay_time_ms;
+	if (!is_format_gapless)
+		prtd->gapless_state.use_dsp_gapless_mode = false;
+
+	prtd->partial_drain_delay =
+		msm_compr_get_partial_drain_delay(frame_sz, prtd->sample_rate);
 
 	memcpy(&prtd->codec_param, params, sizeof(struct snd_compr_params));
 
@@ -1490,7 +1528,7 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 			if (prtd->last_buffer) {
 				pr_debug("%s: last buffer drain\n", __func__);
 				rc = msm_compr_drain_buffer(prtd, &flags);
-				if (rc) {
+				if (rc || !atomic_read(&prtd->start)) {
 					spin_unlock_irqrestore(&prtd->lock,
 									flags);
 					break;
@@ -1498,6 +1536,7 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 			}
 			/* send EOS */
 			prtd->eos_ack = 0;
+			atomic_set(&prtd->eos, 1);
 			pr_debug("issue CMD_EOS stream_id %d\n", ac->stream_id);
 			q6asm_stream_cmd_nowait(ac, CMD_EOS, ac->stream_id);
 			pr_info("PARTIAL DRAIN, do not wait for EOS ack\n");
@@ -1509,7 +1548,7 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 			/* wait for the zero length buffer to be returned */
 			pr_debug("%s: zero length buffer drain\n", __func__);
 			rc = msm_compr_drain_buffer(prtd, &flags);
-			if (rc) {
+			if (rc || !atomic_read(&prtd->start)) {
 				spin_unlock_irqrestore(&prtd->lock, flags);
 				break;
 			}
@@ -1720,6 +1759,12 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 				 __func__);
 			break;
 		}
+
+		spin_lock_irqsave(&prtd->lock, flags);
+		prtd->gapless_state.stream_opened[stream_index] = 1;
+		prtd->gapless_state.set_next_stream_id = true;
+		spin_unlock_irqrestore(&prtd->lock, flags);
+
 		rc = msm_compr_send_media_format_block(cstream,
 						stream_id, false);
 		if (rc < 0) {
@@ -1729,10 +1774,6 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 		}
 		msm_compr_send_dec_params(cstream, pdata->dec_params[fe_id],
 					  stream_id);
-		spin_lock_irqsave(&prtd->lock, flags);
-		prtd->gapless_state.stream_opened[stream_index] = 1;
-		prtd->gapless_state.set_next_stream_id = true;
-		spin_unlock_irqrestore(&prtd->lock, flags);
 		break;
 	}
 
