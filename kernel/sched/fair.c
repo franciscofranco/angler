@@ -1853,6 +1853,8 @@ static int best_small_task_cpu(struct task_struct *p, int sync)
 	hmp_capable = !cpumask_full(&temp);
 
 	cpumask_and(&search_cpu, tsk_cpus_allowed(p), cpu_online_mask);
+	if (unlikely(cpumask_empty(&search_cpu)))
+		return task_cpu(p);
 	if (unlikely(!cpumask_test_cpu(i, &search_cpu))) {
 		if (cpumask_empty(&search_cpu))
 			return fallback_cpu;
@@ -2102,6 +2104,8 @@ static int select_best_cpu(struct task_struct *p, int target, int reason,
 		}
 	}
 
+	if (unlikely(cpumask_empty(&search_cpus)))
+		return i;
 	if (unlikely(!cpumask_test_cpu(i, &search_cpus)))
 		i = cpumask_first(&search_cpus);
 
