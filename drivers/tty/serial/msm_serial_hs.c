@@ -2158,11 +2158,11 @@ void toggle_wakeup_interrupt(struct msm_hs_port *msm_uport)
 		return;
 
 	if (!(msm_uport->wakeup.enabled)) {
-		spin_lock_irqsave(&uport->lock, flags);
-		msm_uport->wakeup.ignore = 1;
 		MSM_HS_DBG("%s(): Enable Wakeup IRQ", __func__);
 		enable_irq(msm_uport->wakeup.irq);
 		disable_irq(uport->irq);
+		spin_lock_irqsave(&uport->lock, flags);
+		msm_uport->wakeup.ignore = 1;
 		msm_uport->wakeup.enabled = true;
 		spin_unlock_irqrestore(&uport->lock, flags);
 	} else {
@@ -3437,6 +3437,7 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 	struct circ_buf *tx_buf = &uport->state->xmit;
 	int data;
+	unsigned long flags;
 
 	if (is_use_low_power_wakeup(msm_uport))
 		irq_set_irq_wake(msm_uport->wakeup.irq, 0);
@@ -3446,7 +3447,20 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	else
 		disable_irq(uport->irq);
 
+
+	spin_lock_irqsave(&uport->lock, flags);
 	msm_uport->wakeup.enabled = false;
+	msm_uport->wakeup.ignore = 1;
+	spin_unlock_irqrestore(&uport->lock, flags);
+
+	/* Free the interrupt */
+	free_irq(uport->irq, msm_uport);
+	if (is_use_low_power_wakeup(msm_uport)) {
+		free_irq(msm_uport->wakeup.irq, msm_uport);
+		MSM_HS_DBG("%s(): wakeup irq freed", __func__);
+	}
+	msm_uport->wakeup.freed = true;
+
 	/* make sure tx lh finishes */
 	flush_kthread_worker(&msm_uport->tx.kworker);
 	ret = wait_event_timeout(msm_uport->tx.wait,
@@ -3512,14 +3526,6 @@ static void msm_hs_shutdown(struct uart_port *uport)
 		MSM_HS_WARN("%s: Client clock vote imbalance\n", __func__);
 		atomic_set(&msm_uport->client_req_state, 0);
 	}
-	/* Free the interrupt */
-	free_irq(uport->irq, msm_uport);
-	if (is_use_low_power_wakeup(msm_uport)) {
-		free_irq(msm_uport->wakeup.irq, msm_uport);
-		MSM_HS_DBG("%s(): wakeup irq freed", __func__);
-	}
-	msm_uport->wakeup.freed = true;
-
 	msm_hs_unconfig_uart_gpios(uport);
 }
 
