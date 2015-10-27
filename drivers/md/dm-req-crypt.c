@@ -140,7 +140,7 @@ static void req_crypt_split_io_complete
 
 static  bool req_crypt_should_encrypt(struct req_dm_crypt_io *req)
 {
-	int ret;
+	int ret = 0;
 	bool should_encrypt = false;
 	struct bio *bio = NULL;
 	u32 key_id = 0;
@@ -169,7 +169,7 @@ static  bool req_crypt_should_encrypt(struct req_dm_crypt_io *req)
 
 static  bool req_crypt_should_deccrypt(struct req_dm_crypt_io *req)
 {
-	int ret;
+	int ret = 0;
 	bool should_deccrypt = false;
 	struct bio *bio = NULL;
 	u32 key_id = 0;
