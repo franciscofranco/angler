@@ -2365,7 +2365,7 @@ int sps_pipe_disable(unsigned long dev, u32 pipe)
 		return SPS_ERROR;
 	}
 
-	bam_disable_pipe(bam->base, pipe);
+	bam_disable_pipe(&bam->base, pipe);
 
 	return 0;
 }
