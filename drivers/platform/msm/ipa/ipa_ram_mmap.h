@@ -82,12 +82,6 @@
  * +-------------+
  * |    CANARY   |
  * +-------------+
- * | APPS V4 FLT |
- * +-------------+
- * | APPS V6 FLT |
- * +-------------+
- * |    CANARY   |
- * +-------------+
  * |   UC INFO   |
  * +-------------+
  */
@@ -157,7 +151,7 @@
 
 #define IPA_MEM_v2_RAM_MODEM_OFST (IPA_MEM_v2_RAM_APPS_HDR_OFST + \
 		IPA_MEM_v2_RAM_APPS_HDR_SIZE + IPA_MEM_CANARY_SIZE)
-#define IPA_MEM_v2_RAM_MODEM_SIZE 3276
+#define IPA_MEM_v2_RAM_MODEM_SIZE 6824
 
 /* modem memory is 4B aligned */
 #if (IPA_MEM_v2_RAM_MODEM_OFST & 3)
@@ -166,7 +160,7 @@
 
 #define IPA_MEM_v2_RAM_APPS_V4_FLT_OFST (IPA_MEM_v2_RAM_MODEM_OFST + \
 		IPA_MEM_v2_RAM_MODEM_SIZE + IPA_MEM_CANARY_SIZE)
-#define IPA_MEM_v2_RAM_APPS_V4_FLT_SIZE 2176
+#define IPA_MEM_v2_RAM_APPS_V4_FLT_SIZE 0
 
 /* filtering rule is 4B aligned */
 #if (IPA_MEM_v2_RAM_APPS_V4_FLT_OFST & 3)
@@ -175,7 +169,7 @@
 
 #define IPA_MEM_v2_RAM_APPS_V6_FLT_OFST (IPA_MEM_v2_RAM_APPS_V4_FLT_OFST + \
 		IPA_MEM_v2_RAM_APPS_V4_FLT_SIZE)
-#define IPA_MEM_v2_RAM_APPS_V6_FLT_SIZE 1372
+#define IPA_MEM_v2_RAM_APPS_V6_FLT_SIZE 0
 
 /* filtering rule is 4B aligned */
 #if (IPA_MEM_v2_RAM_APPS_V6_FLT_OFST & 3)
