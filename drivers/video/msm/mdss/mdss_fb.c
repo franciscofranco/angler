@@ -74,8 +74,8 @@
 				out = (((v) - 2) * 255 / 250);\
 				} while (0)
 
-bool backlight_dimmer = false;
-module_param(backlight_dimmer, bool, 0755);
+bool backlight_dimmer = true;
+module_param(backlight_dimmer, bool, 0644);
 
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
