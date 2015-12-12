@@ -21,7 +21,7 @@
 #define _SYNAPTICS_DSX_H_
 
 //#define CONFIG_HUAWEI //sunlibin add
-#define CONFIG_HUAWEI_DEBUG 1
+#define CONFIG_HUAWEI_DEBUG 0
 #define tp_log_debug(x...)                \
 do{                                     \
     if( CONFIG_HUAWEI_DEBUG )   \

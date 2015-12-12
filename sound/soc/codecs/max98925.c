@@ -483,7 +483,7 @@ static int max98925_left_en_put(struct snd_kcontrol *kcontrol,
 			pr_err("%s: modify spk&recv to high failed nret = %d\n",
 				__func__, nret);
 	} else {
-		pr_err("%s: spk&rcver switch gpio had pulled down", __func__);
+		pr_debug("%s: spk&rcver switch gpio had pulled down", __func__);
 	}
 
 	max98925->left_en = sel << M98925_EN_SHIFT;

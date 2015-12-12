@@ -26,10 +26,7 @@ enum msm_i2_debug_level {
 	MSM_DBG,	/* Low level details. Use for debugging */
 };
 
-#define i2c_msm_dbg(ctrl, dbg_level, fmt, ...) do {\
-		if (ctrl->dbgfs.dbg_lvl >= dbg_level)\
-			dev_info(ctrl->dev, pr_fmt(fmt), ##__VA_ARGS__);\
-	} while (0)
+#define i2c_msm_dbg(ctrl, dbg_level, fmt, ...)
 
 #define BIT_IS_SET(val, idx)        ((val >> idx) & 0x1)
 #define BITS_AT(val, idx, n_bits)(((val) & (((1 << n_bits) - 1) << idx)) >> idx)
