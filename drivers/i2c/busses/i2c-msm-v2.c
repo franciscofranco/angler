@@ -1208,9 +1208,6 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 	int  i;
 	int  ret           = 0;
 	u32  dma_flags     = 0; /* dma_flags!=0 only on last xfer */
-	char str[64];
-	i2c_msm_dbg(ctrl, MSM_DBG, "Going to enqueue %zu buffers in DMA",
-							dma->buf_arr_cnt);
 
 	/* Set the QUP State to pause while DMA completes the txn */
 	ret = i2c_msm_qup_state_set(ctrl, QUP_STATE_PAUSE);
@@ -2759,9 +2756,6 @@ static void i2c_msm_pm_rt_init(struct device *dev)
  */
 static int i2c_msm_pm_rt_suspend(struct device *dev)
 {
-	struct i2c_msm_ctrl *ctrl = dev_get_drvdata(dev);
-
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_runtime: suspending...");
 	i2c_msm_pm_suspend(dev);
 	return 0;
 }
@@ -2771,9 +2765,6 @@ static int i2c_msm_pm_rt_suspend(struct device *dev)
  */
 static int i2c_msm_pm_rt_resume(struct device *dev)
 {
-	struct i2c_msm_ctrl *ctrl = dev_get_drvdata(dev);
-
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_runtime: resuming...");
 	return  i2c_msm_pm_resume(dev);
 }
 
