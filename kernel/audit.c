@@ -86,7 +86,7 @@ EXPORT_SYMBOL_GPL(audit_enabled);
 static int	audit_default;
 
 /* If auditing cannot proceed, audit_failure selects what happens. */
-static int	audit_failure = AUDIT_FAIL_PRINTK;
+static int	audit_failure = 0;
 
 /*
  * If audit records are to be written to the netlink socket, audit_pid
@@ -235,6 +235,7 @@ static inline int audit_rate_check(void)
 */
 void audit_log_lost(const char *message)
 {
+#if 0
 	static unsigned long	last_msg = 0;
 	static DEFINE_SPINLOCK(lock);
 	unsigned long		flags;
@@ -265,6 +266,7 @@ void audit_log_lost(const char *message)
 				audit_backlog_limit);
 		audit_panic(message);
 	}
+#endif
 }
 
 static int audit_log_config_change(char *function_name, int new, int old,
@@ -1665,7 +1667,6 @@ void audit_log_link_denied(const char *operation, struct path *link)
 	audit_log_task_info(ab, current);
 	audit_log_format(ab, " res=0");
 	audit_log_end(ab);
-
 	/* Generate AUDIT_PATH record with object. */
 	name->type = AUDIT_TYPE_NORMAL;
 	audit_copy_inode(name, link->dentry, link->dentry->d_inode);
@@ -1719,6 +1720,7 @@ void audit_log_end(struct audit_buffer *ab)
 void audit_log(struct audit_context *ctx, gfp_t gfp_mask, int type,
 	       const char *fmt, ...)
 {
+#if 0
 	struct audit_buffer *ab;
 	va_list args;
 
@@ -1729,6 +1731,7 @@ void audit_log(struct audit_context *ctx, gfp_t gfp_mask, int type,
 		va_end(args);
 		audit_log_end(ab);
 	}
+#endif
 }
 
 #ifdef CONFIG_SECURITY
