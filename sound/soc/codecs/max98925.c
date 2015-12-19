@@ -46,7 +46,8 @@ static uint8_t *payload = (uint8_t *)&param_array[100];
 static DEFINE_MUTEX(dsm_lock);
 
 #define DEFAULT_SPEAKER_GAIN 20
-int speaker_gain = DEFAULT_SPEAKER_GAIN;
+int speaker_l_gain = DEFAULT_SPEAKER_GAIN;
+int speaker_r_gain = DEFAULT_SPEAKER_GAIN;
 
 static struct reg_default max98925_reg[] = {
 	{ 0x00, 0x00 }, /* Battery Voltage Data */
@@ -377,9 +378,14 @@ static const unsigned int max98925_spk_tlv[] = {
 	1, 31, TLV_DB_SCALE_ITEM(-600, 100, 0),
 };
 
-void update_speakers_gain(int vol_boost)
+void update_speakers_l_gain(int vol_boost)
 {
-	speaker_gain = DEFAULT_SPEAKER_GAIN + vol_boost;
+	speaker_l_gain = DEFAULT_SPEAKER_GAIN + vol_boost;
+}
+
+void update_speakers_r_gain(int vol_boost)
+{
+	speaker_r_gain = DEFAULT_SPEAKER_GAIN + vol_boost;
 }
 
 static int max98925_left_gain_get(struct snd_kcontrol *kcontrol,
@@ -406,10 +412,8 @@ static int max98925_left_gain_put(struct snd_kcontrol *kcontrol,
 	struct max98925_priv *max98925 = snd_soc_codec_get_drvdata(codec);
 	unsigned int sel = ucontrol->value.integer.value[0];
 
-	if (sel && speaker_gain != DEFAULT_SPEAKER_GAIN)
-		sel = speaker_gain;
-
-	pr_info("%d\n", sel);
+	if (sel && speaker_l_gain != DEFAULT_SPEAKER_GAIN)
+		sel = speaker_l_gain;
 
 	if (sel < ((1 << M98925_SPK_GAIN_WIDTH) - 1)) {
 		regmap_update_bits(max98925->regmapL, MAX98925_R02D_GAIN,
@@ -450,10 +454,8 @@ static int max98925_right_gain_put(struct snd_kcontrol *kcontrol,
 	struct max98925_priv *max98925 = snd_soc_codec_get_drvdata(codec);
 	unsigned int sel = ucontrol->value.integer.value[0];
 
-	if (sel && speaker_gain != DEFAULT_SPEAKER_GAIN)
-                sel = speaker_gain;
-
-	pr_info("%d\n", sel);
+	if (sel && speaker_r_gain != DEFAULT_SPEAKER_GAIN)
+                sel = speaker_r_gain;
 
 	if (sel < ((1 << M98925_SPK_GAIN_WIDTH) - 1)) {
 		regmap_update_bits(max98925->regmapR, MAX98925_R02D_GAIN,
