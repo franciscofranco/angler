@@ -54,7 +54,8 @@ module_param(boost_ms, uint, 0644);
 static unsigned int sync_threshold;
 module_param(sync_threshold, uint, 0644);
 
-static bool input_boost_enabled;
+static unsigned int input_boost_enabled = 1;
+module_param(input_boost_enabled, uint, 0644);
 
 static unsigned int input_boost_ms = 40;
 module_param(input_boost_ms, uint, 0644);
@@ -81,7 +82,6 @@ static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 	int i, ntokens = 0;
 	unsigned int val, cpu;
 	const char *cp = buf;
-	bool enabled = false;
 
 	while ((cp = strpbrk(cp + 1, " :")))
 		ntokens++;
@@ -92,7 +92,7 @@ static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 			return -EINVAL;
 		for_each_possible_cpu(i)
 			per_cpu(sync_info, i).input_boost_freq = val;
-		goto check_enable;
+		goto out;
 	}
 
 	/* CPU:value pair */
@@ -111,15 +111,7 @@ static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 		cp++;
 	}
 
-check_enable:
-	for_each_possible_cpu(i) {
-		if (per_cpu(sync_info, i).input_boost_freq) {
-			enabled = true;
-			break;
-		}
-	}
-	input_boost_enabled = enabled;
-
+out:
 	return 0;
 }
 
