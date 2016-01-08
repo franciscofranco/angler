@@ -1319,7 +1319,7 @@
 		reg = <0xfc5a0000 0x8000>;
 		interrupt-names = "ufs_ice_nonsec_level_irq", "ufs_ice_sec_level_irq";
 		interrupts = <0 258 0>, <0 257 0>;
-		status = "disabled";
+		qcom,instance-type = "ufs";
 	};
 
 	ufsphy1: ufsphy@fc597000 {
