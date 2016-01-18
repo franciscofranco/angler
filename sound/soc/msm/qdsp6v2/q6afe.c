@@ -972,11 +972,11 @@ static int afe_get_cal_topology_id(u16 port_id, u32 *topology_id)
 	struct audio_cal_info_afe_top   *afe_top_info = NULL;
 
 	if (this_afe.cal_data[AFE_TOPOLOGY_CAL] == NULL) {
-		pr_err("%s: [AFE_TOPOLOGY_CAL] not initialized\n", __func__);
+		pr_debug("%s: [AFE_TOPOLOGY_CAL] not initialized\n", __func__);
 		return -EINVAL;
 	}
 	if (topology_id == NULL) {
-		pr_err("%s: topology_id is NULL\n", __func__);
+		pr_debug("%s: topology_id is NULL\n", __func__);
 		return -EINVAL;
 	}
 	*topology_id = 0;
@@ -994,7 +994,7 @@ static int afe_get_cal_topology_id(u16 port_id, u32 *topology_id)
 	afe_top_info = ((struct audio_cal_info_afe_top *)
 		cal_block->cal_info);
 	if (!afe_top_info->topology) {
-		pr_err("%s: invalid topology id : [%d, %d]\n",
+		pr_debug("%s: invalid topology id : [%d, %d]\n",
 		       __func__, afe_top_info->acdb_id, afe_top_info->topology);
 		ret = -EINVAL;
 		goto unlock;
