@@ -426,6 +426,8 @@ struct mdss_dsi_ctrl_pdata {
 
 	struct dsi_panel_cmds hbm_on_cmds;
 	struct dsi_panel_cmds hbm_off_cmds;
+
+	struct timespec wait_until_ts;
 };
 
 struct dsi_status_data {
