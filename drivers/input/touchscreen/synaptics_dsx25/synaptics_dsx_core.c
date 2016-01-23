@@ -24,6 +24,7 @@
 #include <linux/input.h>
 #include <linux/gpio.h>
 #include <linux/platform_device.h>
+#include <linux/qpnp/qpnp-haptic.h>
 #include <linux/regulator/consumer.h>
 #include "synaptics_dsx.h"
 #include "synaptics_dsx_core.h"
@@ -100,6 +101,8 @@
 
 #define DSX_VBUS_VTG_MIN_VN1 1850000
 #define DSX_VBUS_VTG_MAX_VN1 1850000
+
+#define VIBRATE_STRENGTH 20
 
 static int synaptics_rmi4_f12_set_enables(struct synaptics_rmi4_data *rmi4_data,
 		unsigned short ctrl28);
@@ -965,6 +968,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 		}
 		if(rmi4_data->gesture_sleep && detected_gestures) {
 			tp_log_debug("%s:gesture detected!\n", __func__);
+			vibrate(VIBRATE_STRENGTH);
 			wake_lock_timeout(&rmi4_data->rmi4_wake_lock, 5*HZ);
 			input_report_key(rmi4_data->input_dev, KEY_WAKEUP, 1);
 			input_sync(rmi4_data->input_dev);
