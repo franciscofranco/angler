@@ -387,23 +387,17 @@ __internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 	list_add_tail(&timer->entry, vec);
 }
 
-static int internal_add_timer(struct tvec_base *base, struct timer_list *timer)
+static void internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 {
-	int leftmost = 0;
-
 	__internal_add_timer(base, timer);
 	/*
 	 * Update base->active_timers and base->next_timer
 	 */
 	if (!tbase_get_deferrable(timer->base)) {
-		if (time_before(timer->expires, base->next_timer)) {
-			leftmost = 1;
+		if (time_before(timer->expires, base->next_timer))
 			base->next_timer = timer->expires;
-		}
 		base->active_timers++;
 	}
-
-	return leftmost;
 }
 
 #ifdef CONFIG_TIMER_STATS
@@ -746,7 +740,7 @@ __mod_timer(struct timer_list *timer, unsigned long expires,
 {
 	struct tvec_base *base, *new_base;
 	unsigned long flags;
-	int ret = 0, cpu, leftmost;
+	int ret = 0 , cpu;
 
 	timer_stats_timer_set_start_info(timer);
 	BUG_ON(!timer->function);
@@ -759,11 +753,10 @@ __mod_timer(struct timer_list *timer, unsigned long expires,
 
 	debug_activate(timer, expires);
 
-	cpu = smp_processor_id();
-
 #ifdef CONFIG_SMP
 	if (base != tvec_base_deferral) {
 #endif
+		 cpu = smp_processor_id();
 
 #if defined(CONFIG_NO_HZ_COMMON) && defined(CONFIG_SMP)
 	if (!pinned && get_sysctl_timer_migration())
@@ -793,23 +786,7 @@ __mod_timer(struct timer_list *timer, unsigned long expires,
 #endif
 
 	timer->expires = expires;
-	leftmost = internal_add_timer(base, timer);
-
-#ifdef CONFIG_SCHED_HMP
-	/*
-	 * Check whether the other CPU is in dynticks mode and needs
-	 * to be triggered to reevaluate the timer wheel.
-	 * We are protected against the other CPU fiddling
-	 * with the timer by holding the timer base lock. This also
-	 * makes sure that a CPU on the way to stop its tick can not
-	 * evaluate the timer wheel.
-	 *
-	 * This test is needed for only CONFIG_SCHED_HMP, as !CONFIG_SCHED_HMP
-	 * selects non-idle cpu as target of timer migration.
-	 */
-	if (cpu != smp_processor_id() && leftmost)
-		wake_up_nohz_cpu(cpu);
-#endif
+	internal_add_timer(base, timer);
 
 out_unlock:
 	spin_unlock_irqrestore(&base->lock, flags);
@@ -968,15 +945,13 @@ void add_timer_on(struct timer_list *timer, int cpu)
 {
 	struct tvec_base *base = per_cpu(tvec_bases, cpu);
 	unsigned long flags;
-	int leftmost;
 
 	timer_stats_timer_set_start_info(timer);
 	BUG_ON(timer_pending(timer) || !timer->function);
 	spin_lock_irqsave(&base->lock, flags);
 	timer_set_base(timer, base);
 	debug_activate(timer, timer->expires);
-	leftmost = internal_add_timer(base, timer);
-
+	internal_add_timer(base, timer);
 	/*
 	 * Check whether the other CPU is in dynticks mode and needs
 	 * to be triggered to reevaluate the timer wheel.
@@ -985,8 +960,7 @@ void add_timer_on(struct timer_list *timer, int cpu)
 	 * makes sure that a CPU on the way to stop its tick can not
 	 * evaluate the timer wheel.
 	 */
-	if (leftmost)
-		wake_up_nohz_cpu(cpu);
+	wake_up_nohz_cpu(cpu);
 	spin_unlock_irqrestore(&base->lock, flags);
 }
 EXPORT_SYMBOL_GPL(add_timer_on);
