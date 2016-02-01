@@ -86,7 +86,7 @@ EXPORT_SYMBOL_GPL(audit_enabled);
 static int	audit_default;
 
 /* If auditing cannot proceed, audit_failure selects what happens. */
-static int	audit_failure = 0;
+static int	audit_failure = AUDIT_FAIL_PRINTK;
 
 /*
  * If audit records are to be written to the netlink socket, audit_pid
@@ -235,7 +235,6 @@ static inline int audit_rate_check(void)
 */
 void audit_log_lost(const char *message)
 {
-#if 0
 	static unsigned long	last_msg = 0;
 	static DEFINE_SPINLOCK(lock);
 	unsigned long		flags;
@@ -266,7 +265,6 @@ void audit_log_lost(const char *message)
 				audit_backlog_limit);
 		audit_panic(message);
 	}
-#endif
 }
 
 static int audit_log_config_change(char *function_name, int new, int old,
@@ -374,7 +372,10 @@ static void audit_printk_skb(struct sk_buff *skb)
 	char *data = nlmsg_data(nlh);
 
 	if (nlh->nlmsg_type != AUDIT_EOE) {
-		pr_debug(KERN_NOTICE "type=%d %s\n", nlh->nlmsg_type, data);
+		if (printk_ratelimit())
+			printk(KERN_NOTICE "type=%d %s\n", nlh->nlmsg_type, data);
+		else
+			audit_log_lost("printk limit exceeded\n");
 	}
 
 	audit_hold_skb(skb);
@@ -1228,7 +1229,6 @@ out:
  */
 void audit_log_format(struct audit_buffer *ab, const char *fmt, ...)
 {
-#if 0
 	va_list args;
 
 	if (!ab)
@@ -1236,7 +1236,6 @@ void audit_log_format(struct audit_buffer *ab, const char *fmt, ...)
 	va_start(args, fmt);
 	audit_log_vformat(ab, fmt, args);
 	va_end(args);
-#endif
 }
 
 /**
@@ -1667,6 +1666,7 @@ void audit_log_link_denied(const char *operation, struct path *link)
 	audit_log_task_info(ab, current);
 	audit_log_format(ab, " res=0");
 	audit_log_end(ab);
+
 	/* Generate AUDIT_PATH record with object. */
 	name->type = AUDIT_TYPE_NORMAL;
 	audit_copy_inode(name, link->dentry, link->dentry->d_inode);
@@ -1720,7 +1720,6 @@ void audit_log_end(struct audit_buffer *ab)
 void audit_log(struct audit_context *ctx, gfp_t gfp_mask, int type,
 	       const char *fmt, ...)
 {
-#if 0
 	struct audit_buffer *ab;
 	va_list args;
 
@@ -1731,7 +1730,6 @@ void audit_log(struct audit_context *ctx, gfp_t gfp_mask, int type,
 		va_end(args);
 		audit_log_end(ab);
 	}
-#endif
 }
 
 #ifdef CONFIG_SECURITY
