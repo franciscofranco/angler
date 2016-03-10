@@ -623,7 +623,7 @@ post_fail:
                         MSM_CAMERA_PRIV_DEL_STREAM, -1, &event);
 
                 /* Donot wait, imaging server may have crashed */
-		msm_post_event(&event, -1);
+                msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
 
                 camera_pack_event(filep, MSM_CAMERA_DEL_SESSION, 0, -1, &event);
 
