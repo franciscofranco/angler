@@ -3163,7 +3163,7 @@ void show_free_areas(unsigned int filter)
 		" dirty:%lu writeback:%lu unstable:%lu\n"
 		" free:%lu slab_reclaimable:%lu slab_unreclaimable:%lu\n"
 		" mapped:%lu shmem:%lu pagetables:%lu bounce:%lu\n"
-		" free_cma:%lu ion:%lu ion_pool:%lu ion_cma:%lu\n",
+		" free_cma:%lu\n",
 		global_page_state(NR_ACTIVE_ANON),
 		global_page_state(NR_INACTIVE_ANON),
 		global_page_state(NR_ISOLATED_ANON),
@@ -3181,10 +3181,7 @@ void show_free_areas(unsigned int filter)
 		global_page_state(NR_SHMEM),
 		global_page_state(NR_PAGETABLE),
 		global_page_state(NR_BOUNCE),
-		global_page_state(NR_FREE_CMA_PAGES),
-		global_page_state(NR_ION_PAGES),
-		global_page_state(NR_ION_POOL_PAGES),
-		global_page_state(NR_ION_CMA_PAGES));
+		global_page_state(NR_FREE_CMA_PAGES));
 
 	for_each_populated_zone(zone) {
 		int i;
@@ -3218,9 +3215,6 @@ void show_free_areas(unsigned int filter)
 			" unstable:%lukB"
 			" bounce:%lukB"
 			" free_cma:%lukB"
-			" ion:%lukB"
-			" ion_pool:%lukB"
-			" ion_cma:%lukB"
 			" writeback_tmp:%lukB"
 			" pages_scanned:%lu"
 			" all_unreclaimable? %s"
@@ -3252,9 +3246,6 @@ void show_free_areas(unsigned int filter)
 			K(zone_page_state(zone, NR_UNSTABLE_NFS)),
 			K(zone_page_state(zone, NR_BOUNCE)),
 			K(zone_page_state(zone, NR_FREE_CMA_PAGES)),
-			K(zone_page_state(zone, NR_ION_PAGES)),
-			K(zone_page_state(zone, NR_ION_POOL_PAGES)),
-			K(zone_page_state(zone, NR_ION_CMA_PAGES)),
 			K(zone_page_state(zone, NR_WRITEBACK_TEMP)),
 			zone->pages_scanned,
 			(!zone_reclaimable(zone) ? "yes" : "no")
