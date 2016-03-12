@@ -121,7 +121,6 @@ static int ext4_fname_encrypt(struct inode *inode,
 	ablkcipher_request_set_crypt(req, &src_sg, &dst_sg, ciphertext_len, iv);
 	res = crypto_ablkcipher_encrypt(req);
 	if (res == -EINPROGRESS || res == -EBUSY) {
-		BUG_ON(req->base.data != &ecr);
 		wait_for_completion(&ecr.completion);
 		res = ecr.res;
 	}
@@ -183,7 +182,6 @@ static int ext4_fname_decrypt(struct inode *inode,
 	ablkcipher_request_set_crypt(req, &src_sg, &dst_sg, iname->len, iv);
 	res = crypto_ablkcipher_decrypt(req);
 	if (res == -EINPROGRESS || res == -EBUSY) {
-		BUG_ON(req->base.data != &ecr);
 		wait_for_completion(&ecr.completion);
 		res = ecr.res;
 	}
@@ -328,6 +326,10 @@ int _ext4_fname_disk_to_usr(struct inode *inode,
 			oname->len = iname->len;
 			return oname->len;
 		}
+	}
+	if (iname->len < EXT4_CRYPTO_BLOCK_SIZE) {
+		EXT4_ERROR_INODE(inode, "encrypted inode too small");
+		return -EUCLEAN;
 	}
 	if (EXT4_I(inode)->i_crypt_info)
 		return ext4_fname_decrypt(inode, iname, oname);
