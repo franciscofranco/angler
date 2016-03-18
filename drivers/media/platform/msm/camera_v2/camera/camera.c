@@ -695,7 +695,6 @@ static int camera_v4l2_close(struct file *filep)
 long camera_v4l2_compat_ioctl(struct file *file, unsigned int cmd,
 	unsigned long arg)
 {
-	pr_err_ratelimited("%s: Not supported", __func__);
 	return -ENOIOCTLCMD;
 }
 #endif
