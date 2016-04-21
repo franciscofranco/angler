@@ -4672,7 +4672,6 @@ static void increment_aicl_count(struct smbchg_chip *chip)
 			if (rc)
 				pr_err("Couldn't set health on usb psy rc:%d\n",
 					rc);
-			schedule_work(&chip->usb_set_online_work);
 		}
 	}
 }
@@ -5178,7 +5177,6 @@ static irqreturn_t usbin_uv_handler(int irq, void *_chip)
 			rc = smbchg_set_usb_current_max(chip, CURRENT_150_MA);
 			if (rc)
 				pr_err("could not set current 150mA : %d", rc);
-			schedule_work(&chip->usb_set_online_work);
 		}
 		pr_smb(PR_MISC, "setting usb psy health UNSPEC_FAILURE\n");
 		rc = power_supply_set_health_state(chip->usb_psy,
