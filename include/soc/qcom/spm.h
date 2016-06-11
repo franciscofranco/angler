@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,9 +25,6 @@ enum {
 struct msm_spm_device;
 struct device_node;
 
-#define spm_raw_write(v, a)	({ __raw_writel(v, a); __raw_readl(a); })
-#define spm_write_relaxed(v, c)	({ writel_relaxed(v, c); readl_relaxed(c); })
-
 #if defined(CONFIG_MSM_SPM)
 
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm);
@@ -38,8 +35,6 @@ int msm_spm_turn_on_cpu_rail(struct device_node *l2ccc_node,
 		unsigned int val, int cpu, int vctl_offset);
 struct msm_spm_device *msm_spm_get_device_by_name(const char *name);
 int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm);
-int msm_spm_config_low_power_mode_addr(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm);
 int msm_spm_device_init(void);
 bool msm_spm_is_mode_avail(unsigned int mode);
@@ -100,24 +95,17 @@ static inline void msm_spm_dump_regs(unsigned int cpu)
 	return;
 }
 
-static inline int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
+int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm)
 {
 	return -ENODEV;
 }
-
-static inline int msm_spm_config_low_power_mode_addr(
-	struct msm_spm_device *dev, unsigned int mode, bool notify_rpm)
-{
-	return -ENODEV;
-}
-static inline struct msm_spm_device *msm_spm_get_device_by_name
-						(const char *name)
+struct msm_spm_device *msm_spm_get_device_by_name(const char *name)
 {
 	return NULL;
 }
 
-static inline bool msm_spm_is_mode_avail(unsigned int mode)
+bool msm_spm_is_mode_avail(unsigned int mode)
 {
 	return false;
 }

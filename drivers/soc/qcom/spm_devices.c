@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -181,11 +181,12 @@ static void msm_spm_config_q2s(struct msm_spm_device *dev, unsigned int mode)
 	}
 
 	val = spm_legacy_mode << 2 | qchannel_ignore << 1;
-	spm_raw_write(val, dev->q2s_reg);
+	__raw_writel(val, dev->q2s_reg);
+	mb();
 }
 
 static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm, bool set_spm_enable)
+		unsigned int mode, bool notify_rpm)
 {
 	uint32_t i;
 	uint32_t start_addr = 0;
@@ -195,18 +196,13 @@ static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
 	if (!dev->initialized)
 		return -ENXIO;
 
-	if (!dev->num_modes)
-		return 0;
-
 	if ((mode == MSM_SPM_MODE_POWER_COLLAPSE)
 			|| (mode == MSM_SPM_MODE_GDHS))
 		pc_mode = true;
 
-	if (mode == MSM_SPM_MODE_DISABLED && set_spm_enable) {
+	if (mode == MSM_SPM_MODE_DISABLED) {
 		ret = msm_spm_drv_set_spm_enable(&dev->reg_data, false);
-	} else {
-		if (set_spm_enable)
-			ret = msm_spm_drv_set_spm_enable(&dev->reg_data, true);
+	} else if (!msm_spm_drv_set_spm_enable(&dev->reg_data, true)) {
 		for (i = 0; i < dev->num_modes; i++) {
 			if (dev->modes[i].mode != mode)
 				continue;
@@ -241,6 +237,7 @@ static int msm_spm_dev_init(struct msm_spm_device *dev,
 	if (!dev->modes)
 		goto spm_failed_malloc;
 
+	dev->reg_data.ver_reg = data->ver_reg;
 	ret = msm_spm_drv_init(&dev->reg_data, data);
 
 	if (ret)
@@ -259,9 +256,7 @@ static int msm_spm_dev_init(struct msm_spm_device *dev,
 
 		dev->modes[i].mode = data->modes[i].mode;
 	}
-
-	msm_spm_drv_reinit(&dev->reg_data, dev->num_modes ? true : false);
-
+	msm_spm_drv_flush_seq_entry(&dev->reg_data);
 	dev->initialized = true;
 
 	return 0;
@@ -293,7 +288,8 @@ int msm_spm_turn_on_cpu_rail(struct device_node *vctl_node,
 		 * bit[1] = qchannel_ignore = 1
 		 * bit[2] = spm_legacy_mode = 0
 		 */
-		spm_write_relaxed(0x2, base);
+		writel_relaxed(0x2, base);
+		mb();
 		iounmap(base);
 	}
 
@@ -306,12 +302,14 @@ int msm_spm_turn_on_cpu_rail(struct device_node *vctl_node,
 
 	/* Set the CPU supply regulator voltage */
 	val = (val & 0xFF);
-	spm_write_relaxed(val, base + vctl_offset);
+	writel_relaxed(val, base + vctl_offset);
+	mb();
 	udelay(timeout);
 
 	/* Enable the CPU supply regulator*/
 	val = 0x30080;
-	spm_write_relaxed(val, base + vctl_offset);
+	writel_relaxed(val, base + vctl_offset);
+	mb();
 	udelay(timeout);
 
 	iounmap(base);
@@ -324,8 +322,7 @@ void msm_spm_reinit(void)
 {
 	unsigned int cpu;
 	for_each_possible_cpu(cpu)
-		msm_spm_drv_reinit(
-			&per_cpu(msm_cpu_spm_device.reg_data, cpu), true);
+		msm_spm_drv_reinit(&per_cpu(msm_cpu_spm_device.reg_data, cpu));
 }
 EXPORT_SYMBOL(msm_spm_reinit);
 
@@ -355,7 +352,7 @@ bool msm_spm_is_mode_avail(unsigned int mode)
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
 	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, true);
+	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm);
 }
 EXPORT_SYMBOL(msm_spm_set_low_power_mode);
 
@@ -397,16 +394,10 @@ struct msm_spm_device *msm_spm_get_device_by_name(const char *name)
 	return ERR_PTR(-ENODEV);
 }
 
-int msm_spm_config_low_power_mode_addr(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm)
-{
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, false);
-}
-
 int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm)
 {
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, true);
+	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm);
 }
 #ifdef CONFIG_MSM_L2_SPM
 
@@ -549,21 +540,21 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 	};
 
 	struct spm_of spm_of_data[] = {
-		{"qcom,saw2-cfg", MSM_SPM_REG_SAW_CFG},
-		{"qcom,saw2-avs-ctl", MSM_SPM_REG_SAW_AVS_CTL},
-		{"qcom,saw2-avs-hysteresis", MSM_SPM_REG_SAW_AVS_HYSTERESIS},
-		{"qcom,saw2-avs-limit", MSM_SPM_REG_SAW_AVS_LIMIT},
-		{"qcom,saw2-avs-dly", MSM_SPM_REG_SAW_AVS_DLY},
-		{"qcom,saw2-spm-dly", MSM_SPM_REG_SAW_SPM_DLY},
-		{"qcom,saw2-spm-ctl", MSM_SPM_REG_SAW_SPM_CTL},
-		{"qcom,saw2-pmic-data0", MSM_SPM_REG_SAW_PMIC_DATA_0},
-		{"qcom,saw2-pmic-data1", MSM_SPM_REG_SAW_PMIC_DATA_1},
-		{"qcom,saw2-pmic-data2", MSM_SPM_REG_SAW_PMIC_DATA_2},
-		{"qcom,saw2-pmic-data3", MSM_SPM_REG_SAW_PMIC_DATA_3},
-		{"qcom,saw2-pmic-data4", MSM_SPM_REG_SAW_PMIC_DATA_4},
-		{"qcom,saw2-pmic-data5", MSM_SPM_REG_SAW_PMIC_DATA_5},
-		{"qcom,saw2-pmic-data6", MSM_SPM_REG_SAW_PMIC_DATA_6},
-		{"qcom,saw2-pmic-data7", MSM_SPM_REG_SAW_PMIC_DATA_7},
+		{"qcom,saw2-cfg", MSM_SPM_REG_SAW2_CFG},
+		{"qcom,saw2-avs-ctl", MSM_SPM_REG_SAW2_AVS_CTL},
+		{"qcom,saw2-avs-hysteresis", MSM_SPM_REG_SAW2_AVS_HYSTERESIS},
+		{"qcom,saw2-avs-limit", MSM_SPM_REG_SAW2_AVS_LIMIT},
+		{"qcom,saw2-avs-dly", MSM_SPM_REG_SAW2_AVS_DLY},
+		{"qcom,saw2-spm-dly", MSM_SPM_REG_SAW2_SPM_DLY},
+		{"qcom,saw2-spm-ctl", MSM_SPM_REG_SAW2_SPM_CTL},
+		{"qcom,saw2-pmic-data0", MSM_SPM_REG_SAW2_PMIC_DATA_0},
+		{"qcom,saw2-pmic-data1", MSM_SPM_REG_SAW2_PMIC_DATA_1},
+		{"qcom,saw2-pmic-data2", MSM_SPM_REG_SAW2_PMIC_DATA_2},
+		{"qcom,saw2-pmic-data3", MSM_SPM_REG_SAW2_PMIC_DATA_3},
+		{"qcom,saw2-pmic-data4", MSM_SPM_REG_SAW2_PMIC_DATA_4},
+		{"qcom,saw2-pmic-data5", MSM_SPM_REG_SAW2_PMIC_DATA_5},
+		{"qcom,saw2-pmic-data6", MSM_SPM_REG_SAW2_PMIC_DATA_6},
+		{"qcom,saw2-pmic-data7", MSM_SPM_REG_SAW2_PMIC_DATA_7},
 	};
 
 	struct mode_of {
@@ -658,14 +649,11 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 	 */
 	msm_spm_config_q2s(dev, MSM_SPM_MODE_POWER_COLLAPSE);
 
-	msm_spm_drv_reg_init(&dev->reg_data, &spm_data);
-
 	for (i = 0; i < ARRAY_SIZE(spm_of_data); i++) {
 		ret = of_property_read_u32(node, spm_of_data[i].key, &val);
 		if (ret)
 			continue;
-		msm_spm_drv_upd_reg_shadow(&dev->reg_data, spm_of_data[i].id,
-				val);
+		spm_data.reg_init_values[spm_of_data[i].id] = val;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(mode_of_data); i++) {
@@ -674,11 +662,9 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 			(uint8_t *)of_get_property(node, key, &len);
 		if (!modes[mode_count].cmd)
 			continue;
-
 		modes[mode_count].mode = mode_of_data[i].id;
 		pr_debug("%s(): dev: %s cmd:%s, mode:%d\n", __func__,
 				dev->name, key, modes[mode_count].mode);
-
 		mode_count++;
 	}
 
@@ -690,15 +676,12 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 
 	ret = msm_spm_dev_init(dev, &spm_data);
 	if (ret)
-		pr_err("SPM modes programming is not available from HLOS\n");
+		goto fail;
 
 	platform_set_drvdata(pdev, dev);
 
 	for_each_cpu(cpu, &dev->mask)
 		per_cpu(cpu_vctl_device, cpu) = dev;
-
-	if (!spm_data.num_modes)
-		return 0;
 
 	cpu = get_cpu_id(pdev->dev.of_node);
 
@@ -711,6 +694,7 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 		msm_spm_config_low_power_mode(dev, MSM_SPM_MODE_CLOCK_GATING,
 				false);
 	put_online_cpus();
+
 	return ret;
 
 fail:
