@@ -311,7 +311,6 @@ struct msm_vidc_inst {
 	atomic_t seq_hdr_reqs;
 	struct v4l2_ctrl **ctrls;
 	bool dcvs_mode;
-	u32 buffers_held_in_driver;
 };
 
 extern struct msm_vidc_drv *vidc_driver;
