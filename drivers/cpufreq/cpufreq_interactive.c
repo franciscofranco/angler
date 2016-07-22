@@ -1568,6 +1568,7 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 	struct cpufreq_frequency_table *freq_table;
 	struct cpufreq_interactive_tunables *tunables;
 	unsigned long flags;
+	unsigned int anyboost;
 
 	if (have_governor_per_policy())
 		tunables = policy->governor_data;
@@ -1704,10 +1705,12 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		down_read(&ppol->enable_sem);
 		if (ppol->governor_enabled) {
 			spin_lock_irqsave(&ppol->target_freq_lock, flags);
-			if (policy->max < ppol->target_freq)
+			if (policy->max < ppol->target_freq) {
 				ppol->target_freq = policy->max;
-			else if (policy->min > ppol->target_freq)
+			} else if (policy->min > ppol->target_freq) {
 				ppol->target_freq = policy->min;
+				anyboost = 1;
+			}
 			spin_unlock_irqrestore(&ppol->target_freq_lock, flags);
 
 			if (policy->min < ppol->min_freq)
@@ -1717,6 +1720,14 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		}
 
 		up_read(&ppol->enable_sem);
+
+		if (anyboost) {
+			u64 now = ktime_to_us(ktime_get());
+
+			ppol->hispeed_validate_time = now;
+			ppol->floor_freq = policy->min;
+			ppol->floor_validate_time = now;
+		}
 
 		break;
 	}
