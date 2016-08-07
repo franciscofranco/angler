@@ -473,7 +473,7 @@ static int spich_message(struct spich_data *spich,
 	unsigned n;
 	unsigned total;
 	struct timespec t;
-	uint64_t now_us;
+	uint64_t now_us = 0;
 
 	spi_message_init(&msg);
 
