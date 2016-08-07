@@ -1088,7 +1088,7 @@ static void try_to_steal_freepages(struct zone *zone, struct page *page,
 	    (start_type == MIGRATE_UNMOVABLE && fallback_type != MIGRATE_MOVABLE && current_order >= pageblock_order / 2) ||
 	    /* reclaimable can steal aggressively */
 	    start_type == MIGRATE_RECLAIMABLE ||
-	    // allow unmovable allocs up to 64K without migrating blocks
+	    /* allow unmovable allocs up to 64K without migrating blocks */
 	    (start_type == MIGRATE_UNMOVABLE && start_order >= 5) ||
 	    page_group_by_mobility_disabled) {
 		int pages;
@@ -1131,8 +1131,19 @@ __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
 					struct page, lru);
 			area->nr_free--;
 
-			try_to_steal_freepages(zone, page, start_migratetype,
-								migratetype, order);
+			if (!is_migrate_cma(migratetype)) {
+				try_to_steal_freepages(zone, page,
+						       start_migratetype,
+						       migratetype, order);
+			} else {
+				/*
+				 * When borrowing from MIGRATE_CMA, we need to
+				 * release the excess buddy pages to CMA
+				 * itself, and we do not try to steal extra
+				 * free pages.
+				 */
+				buddy_type = migratetype;
+			}
 
 			/* Remove the page from the freelists */
 			list_del(&page->lru);
