@@ -2075,7 +2075,8 @@ static void smbchg_parallel_usb_enable(struct smbchg_chip *chip)
 			} else {
 				smbchg_float_voltage_set(chip,
 					chip->current_stage_thr_mv);
-				schedule_delayed_work(&chip->current_stage_work,
+				queue_delayed_work(system_power_efficient_wq,
+					&chip->current_stage_work,
 					msecs_to_jiffies(STAGE_WORK_DELAY_MS));
 			}
 		}
@@ -2159,7 +2160,7 @@ static void smbchg_parallel_usb_check_ok(struct smbchg_chip *chip)
 	mutex_lock(&chip->parallel.lock);
 	if (smbchg_is_parallel_usb_ok(chip)) {
 		smbchg_stay_awake(chip, PM_PARALLEL_CHECK);
-		schedule_delayed_work(
+		queue_delayed_work(system_power_efficient_wq,
 			&chip->parallel_en_work,
 			msecs_to_jiffies(PARALLEL_CHARGER_EN_DELAY_MS));
 	} else if (chip->parallel.current_max_ma != 0) {
@@ -3294,7 +3295,8 @@ static void smbchg_vfloat_adjust_check(struct smbchg_chip *chip)
 
 	smbchg_stay_awake(chip, PM_REASON_VFLOAT_ADJUST);
 	pr_smb(PR_STATUS, "Starting vfloat adjustments\n");
-	schedule_delayed_work(&chip->vfloat_adjust_work, 0);
+	queue_delayed_work(system_power_efficient_wq,
+		&chip->vfloat_adjust_work, 0);
 }
 
 #define FV_STS_REG			0xC
@@ -4248,8 +4250,9 @@ stop:
 	return;
 
 reschedule:
-	schedule_delayed_work(&chip->vfloat_adjust_work,
-			msecs_to_jiffies(VFLOAT_RESAMPLE_DELAY_MS));
+	queue_delayed_work(system_power_efficient_wq,
+		&chip->vfloat_adjust_work,
+		msecs_to_jiffies(VFLOAT_RESAMPLE_DELAY_MS));
 	return;
 }
 
@@ -4536,8 +4539,9 @@ static void handle_usb_insertion(struct smbchg_chip *chip)
 	}
 
 	if (usb_supply_type == POWER_SUPPLY_TYPE_USB_DCP)
-		schedule_delayed_work(&chip->hvdcp_det_work,
-					msecs_to_jiffies(HVDCP_NOTIFY_MS));
+		queue_delayed_work(system_power_efficient_wq,
+				&chip->hvdcp_det_work,
+				msecs_to_jiffies(HVDCP_NOTIFY_MS));
 
 	if (parallel_psy) {
 		rc = power_supply_set_present(parallel_psy, true);
@@ -4556,7 +4560,8 @@ static void handle_usb_insertion(struct smbchg_chip *chip)
 	 * In order to update compass compensation in time, schedule monitor
 	 * work 5 seconds later.
 	 */
-	schedule_delayed_work(&chip->monitor_charging_work,
+	queue_delayed_work(system_power_efficient_wq,
+			&chip->monitor_charging_work,
 			msecs_to_jiffies(COMPENSATION_DELAY_MS));
 }
 
@@ -4882,8 +4887,9 @@ static void current_stage_work(struct work_struct *work)
 		} else {
 			chip->current_stage_count = 0;
 		}
-		schedule_delayed_work(&chip->current_stage_work,
-				msecs_to_jiffies(STAGE_WORK_DELAY_MS));
+		queue_delayed_work(system_power_efficient_wq,
+			&chip->current_stage_work,
+			msecs_to_jiffies(STAGE_WORK_DELAY_MS));
 	}
 }
 
@@ -4957,8 +4963,9 @@ static void monitor_charging_work(struct work_struct *work)
 			}
 		}
 		check_battery_ov_wa(chip);
-		schedule_delayed_work(&chip->monitor_charging_work,
-				msecs_to_jiffies(CHG_MONITOR_WORK_DELAY_MS));
+		queue_delayed_work(system_power_efficient_wq,
+			&chip->monitor_charging_work,
+			msecs_to_jiffies(CHG_MONITOR_WORK_DELAY_MS));
 	}
 }
 
