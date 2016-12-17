@@ -698,8 +698,7 @@ static ssize_t f2fs_direct_IO(int rw, struct kiocb *iocb,
 						  get_data_block_ro);
 }
 
-static void f2fs_invalidate_data_page(struct page *page, unsigned int offset,
-				      unsigned int length)
+static void f2fs_invalidate_data_page(struct page *page, unsigned long offset)
 {
 	struct inode *inode = page->mapping->host;
 	struct f2fs_sb_info *sbi = F2FS_SB(inode->i_sb);
