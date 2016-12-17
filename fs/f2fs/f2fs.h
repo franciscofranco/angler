@@ -131,9 +131,9 @@ static inline void inode_unlock(struct inode *inode)
  *
  * Please refer to the comment for waitqueue_active.
  */
-static inline bool wq_has_sleeper(wait_queue_head_t *wq) 
+static inline bool wq_has_sleeper(wait_queue_head_t *wq)
 {
-	/*   
+	/*
 	 * We need to be sure we are in sync with the
 	 * add_wait_queue modifications to the wait queue.
 	 *
@@ -142,11 +142,6 @@ static inline bool wq_has_sleeper(wait_queue_head_t *wq)
 	 */
 	smp_mb();
 	return waitqueue_active(wq);
-}
-
-static inline struct inode *d_inode(const struct dentry *dentry)
-{
-	return dentry->d_inode;
 }
 
 static inline struct dentry *file_dentry(const struct file *file)
