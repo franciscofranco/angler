@@ -780,6 +780,8 @@ static ssize_t mdss_set_rgb(struct device *dev,
 	struct device_attribute *attr,
 	const char *buf, size_t count)
 {
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
 	uint32_t r = 0, g = 0, b = 0;
 
 	if (count > 19)
@@ -794,7 +796,9 @@ static ssize_t mdss_set_rgb(struct device *dev,
 	if (b < 0 || b > 32768)
 		return -EINVAL;
 
+	mutex_lock(&mfd->update.lock);
 	kcal_ext_apply_values(r, g, b);
+	mutex_unlock(&mfd->update.lock);
 
 	return count;
 }
