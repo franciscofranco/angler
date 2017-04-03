@@ -30,6 +30,8 @@
 
 #define FUNCTIONFS_MAGIC	0xa647361 /* Chosen by a honest dice roll ;) */
 
+#define ENDPOINT_ALLOC_MAX	1 << 25 /* Max endpoint buffer size, 32 MB */
+
 
 /* Debugging ****************************************************************/
 
@@ -141,8 +143,6 @@ struct ffs_data {
 	struct usb_request		*ep0req;		/* P: mutex */
 	struct completion		ep0req_completion;	/* P: mutex */
 	int				ep0req_status;		/* P: mutex */
-	struct completion		epin_completion;
-	struct completion		epout_completion;
 
 	/* reference counter */
 	atomic_t			ref;
@@ -335,6 +335,9 @@ struct ffs_epfile {
 	unsigned char			isoc;	/* P: ffs->eps_lock */
 
 	unsigned char			_pad;
+
+	unsigned long			buf_len;
+	char				*buffer;
 };
 
 static int  __must_check ffs_epfiles_create(struct ffs_data *ffs);
@@ -772,11 +775,10 @@ static ssize_t ffs_epfile_io(struct file *file,
 {
 	struct ffs_epfile *epfile = file->private_data;
 	struct ffs_ep *ep;
-	struct ffs_data *ffs = epfile->ffs;
 	char *data = NULL;
 	ssize_t ret;
 	int halt;
-	int buffer_len = 0;
+	size_t buffer_len = 0;
 
 	pr_debug("%s: len %zu, read %d\n", __func__, len, read);
 
@@ -837,7 +839,10 @@ first_try:
 
 		/* Allocate & copy */
 		if (!halt && !data) {
-			data = kzalloc(buffer_len, GFP_KERNEL);
+
+			data = buffer_len > epfile->buf_len ?
+				kzalloc(buffer_len, GFP_KERNEL) :
+				epfile->buffer;
 			if (unlikely(!data))
 				return -ENOMEM;
 
@@ -874,27 +879,21 @@ first_try:
 		ret = -EBADMSG;
 	} else {
 		/* Fire the request */
-		struct completion *done;
+		DECLARE_COMPLETION_ONSTACK(done);
 
 		struct usb_request *req = ep->req;
 		req->complete = ffs_epfile_io_complete;
 		req->buf      = data;
 		req->length   = buffer_len;
+		req->context  = &done;
 
-		if (read) {
-			INIT_COMPLETION(ffs->epout_completion);
-			req->context  = done = &ffs->epout_completion;
-		} else {
-			INIT_COMPLETION(ffs->epin_completion);
-			req->context  = done = &ffs->epin_completion;
-		}
 		ret = usb_ep_queue(ep->ep, req, GFP_ATOMIC);
 
 		spin_unlock_irq(&epfile->ffs->eps_lock);
 
 		if (unlikely(ret < 0)) {
 			ret = -EIO;
-		} else if (unlikely(wait_for_completion_interruptible(done))) {
+		} else if (unlikely(wait_for_completion_interruptible(&done))) {
 			spin_lock_irq(&epfile->ffs->eps_lock);
 			/*
 			 * While we were acquiring lock endpoint got disabled
@@ -917,14 +916,14 @@ first_try:
 			spin_unlock_irq(&epfile->ffs->eps_lock);
 			if (read && ret > 0) {
 				if (len != MAX_BUF_LEN && ret < len)
-					pr_err("less data(%zd) recieved than intended length(%zu)\n",
+					pr_debug("less data(%zd) received than intended length(%zu)\n",
 								ret, len);
 				if (ret > len) {
-					ret = -EOVERFLOW;
-					pr_err("More data(%zd) recieved than intended length(%zu)\n",
+					pr_err("More data(%zd) received than intended length(%zu)\n",
 								ret, len);
+					ret = -EOVERFLOW;
 				} else if (unlikely(copy_to_user(
-							buf, data, ret))) {
+						buf, data, ret))) {
 					pr_err("Fail to copy to user len:%zd\n",
 									ret);
 					ret = -EFAULT;
@@ -935,7 +934,8 @@ first_try:
 
 	mutex_unlock(&epfile->mutex);
 error:
-	kfree(data);
+	if (buffer_len > epfile->buf_len)
+		kfree(data);
 	if (ret < 0 && ret != -ERESTARTSYS)
 		pr_err_ratelimited("%s(): Error: returning %zd value\n",
 							__func__, ret);
@@ -986,6 +986,9 @@ ffs_epfile_release(struct inode *inode, struct file *file)
 	atomic_set(&epfile->error, 1);
 	ffs_data_closed(epfile->ffs);
 	file->private_data = NULL;
+	epfile->buf_len = 0;
+	kfree(epfile->buffer);
+	epfile->buffer = NULL;
 
 	return 0;
 }
@@ -1002,7 +1005,7 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 		return -ENODEV;
 
 	spin_lock_irq(&epfile->ffs->eps_lock);
-	if (likely(epfile->ep)) {
+	if (epfile->ep) {
 		switch (code) {
 		case FUNCTIONFS_FIFO_STATUS:
 			ret = usb_ep_fifo_status(epfile->ep->ep);
@@ -1017,6 +1020,52 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 		case FUNCTIONFS_ENDPOINT_REVMAP:
 			ret = epfile->ep->num;
 			break;
+		case FUNCTIONFS_ENDPOINT_DESC:
+		{
+			int desc_idx;
+			struct usb_endpoint_descriptor *desc;
+
+			switch (epfile->ffs->gadget->speed) {
+			case USB_SPEED_SUPER:
+				desc_idx = 2;
+				break;
+			case USB_SPEED_HIGH:
+				desc_idx = 1;
+				break;
+			default:
+				desc_idx = 0;
+			}
+			desc = epfile->ep->descs[desc_idx];
+
+			spin_unlock_irq(&epfile->ffs->eps_lock);
+			ret = copy_to_user((void *)value, desc, sizeof(*desc));
+			if (ret)
+				ret = -EFAULT;
+			return ret;
+		}
+		case FUNCTIONFS_ENDPOINT_ALLOC:
+		{
+			void *temp = epfile->buffer;
+			epfile->buffer = NULL;
+			epfile->buf_len = 0;
+			spin_unlock_irq(&epfile->ffs->eps_lock);
+
+			kfree(temp);
+			if (!value)
+				return 0;
+			if (value > ENDPOINT_ALLOC_MAX)
+				return -EINVAL;
+
+			temp = kzalloc(value, GFP_KERNEL);
+			if (!temp)
+				return -ENOMEM;
+
+			spin_lock_irq(&epfile->ffs->eps_lock);
+			epfile->buffer = temp;
+			epfile->buf_len = value;
+			ret = 0;
+			break;
+		}
 		default:
 			ret = -ENOTTY;
 		}
@@ -1402,8 +1451,6 @@ static struct ffs_data *ffs_data_new(void)
 	spin_lock_init(&ffs->eps_lock);
 	init_waitqueue_head(&ffs->ev.waitq);
 	init_completion(&ffs->ep0req_completion);
-	init_completion(&ffs->epout_completion);
-	init_completion(&ffs->epin_completion);
 
 	/* XXX REVISIT need to update it in some places, or do we? */
 	ffs->ev.can_stall = 1;

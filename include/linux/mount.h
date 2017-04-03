@@ -46,7 +46,11 @@ struct mnt_namespace;
 				 | MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME \
 				 | MNT_READONLY)
 
+
 #define MNT_ATIME_MASK (MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME )
+#define MNT_INTERNAL_FLAGS (MNT_SHARED | MNT_WRITE_HOLD | MNT_INTERNAL | \
+			    MNT_MARKED)
+
 #define MNT_INTERNAL_FLAGS (MNT_SHARED | MNT_WRITE_HOLD | MNT_INTERNAL | \
 			    MNT_MARKED)
 
@@ -63,6 +67,7 @@ struct vfsmount {
 	struct dentry *mnt_root;	/* root of the mounted tree */
 	struct super_block *mnt_sb;	/* pointer to superblock */
 	int mnt_flags;
+	void *data;
 };
 
 struct file; /* forward dec */
