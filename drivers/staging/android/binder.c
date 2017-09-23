@@ -107,6 +107,8 @@ static const struct file_operations binder_##name##_fops = { \
 static int binder_proc_show(struct seq_file *m, void *unused);
 BINDER_DEBUG_ENTRY(proc);
 
+#define MAX_NICE	19
+
 /* This is only defined in include/asm-arm/sizes.h */
 #ifndef SZ_1K
 #define SZ_1K                               0x400
@@ -184,6 +186,14 @@ module_param_call(stop_on_user_error, binder_set_stop_on_user_error,
 
 #define to_binder_fd_array_object(hdr) \
 	container_of(hdr, struct binder_fd_array_object, hdr)
+
+/*
+ * Convert rlimit style value [1,40] to nice value [-20, 19].
+ */
+static inline long rlimit_to_nice(long prio)
+{
+	return (MAX_NICE - prio + 1);
+}
 
 enum binder_stat_types {
 	BINDER_STAT_PROC,
