@@ -252,10 +252,10 @@ static ssize_t timerfd_read(struct file *file, char __user *buf, size_t count,
 	if (file->f_flags & O_NONBLOCK)
 		res = -EAGAIN;
 	else {
-		printk("timerfd blocking read by tid %d\n",
+		pr_debug("timerfd blocking read by tid %d\n",
 			pid_nr(get_task_pid(current, PIDTYPE_PID)));
 		res = wait_event_interruptible_locked_irq(ctx->wqh, ctx->ticks);
-		printk("timerfd blocking read released by tid %d\n",
+		pr_debug("timerfd blocking read released by tid %d\n",
 			pid_nr(get_task_pid(current, PIDTYPE_PID)));
 	}
 
