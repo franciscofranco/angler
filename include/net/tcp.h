@@ -1044,6 +1044,7 @@ static inline void tcp_prequeue_init(struct tcp_sock *tp)
 }
 
 extern bool tcp_prequeue(struct sock *sk, struct sk_buff *skb);
+int tcp_filter(struct sock *sk, struct sk_buff *skb);
 
 #undef STATE_TRACE
 
@@ -1609,5 +1610,15 @@ struct tcp_request_sock_ops {
 
 extern void tcp_v4_init(void);
 extern void tcp_init(void);
+
+/* At how many jiffies into the future should the RTO fire? */
+static inline s32 tcp_rto_delta(const struct sock *sk)
+{
+	const struct sk_buff *skb = tcp_write_queue_head(sk);
+	const u32 rto = inet_csk(sk)->icsk_rto;
+	const u32 rto_time_stamp = TCP_SKB_CB(skb)->when + rto;
+
+	return (s32)(rto_time_stamp - tcp_time_stamp);
+}
 
 #endif	/* _TCP_H */
