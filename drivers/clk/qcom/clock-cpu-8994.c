@@ -553,7 +553,6 @@ static struct mux_clk a53_hf_mux = {
 	.c = {
 		.dbg_name = "a53_hf_mux",
 		.ops = &clk_ops_gen_mux,
-		.flags = CLKFLAG_NO_RATE_CACHE,
 		CLK_INIT(a53_hf_mux.c),
 	},
 };
@@ -596,7 +595,6 @@ static struct mux_clk a57_hf_mux = {
 	.c = {
 		.dbg_name = "a57_hf_mux",
 		.ops = &clk_ops_gen_mux,
-		.flags = CLKFLAG_NO_RATE_CACHE,
 		CLK_INIT(a57_hf_mux.c),
 	},
 };
